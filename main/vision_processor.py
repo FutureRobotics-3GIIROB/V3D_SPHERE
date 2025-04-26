@@ -65,7 +65,7 @@ def extract_ball_data(det: dict[str, Any] | None) -> tuple[tuple[int, int] | Non
 
 
 def build_aruco_entries(
-    aruco_reader: ArucoReader, detections: list[Any]
+    aruco_reader: ArucoReader, detections: list[Any], homography: Any
 ) -> tuple[list[dict[str, Any]], list[MarkerState]]:
     """Build serializable payload entries and MarkerState objects for all detected markers."""
     entries: list[dict[str, Any]] = []
@@ -82,6 +82,11 @@ def build_aruco_entries(
             "center_px": [int(det.center_px[0]), int(det.center_px[1])],
             "estado": estado,
         }
+
+        marker_x_mm, marker_y_mm = HomographyCalibrator.transform_point(det.center_px, homography)
+        marker_xyz_mm = (float(marker_x_mm), float(marker_y_mm), 0.0)
+        entry["xyz_mm"] = list(marker_xyz_mm)
+
         tvec_m = None
         if det.rvec is not None and det.tvec is not None:
             tvec_flat = det.tvec.flatten()
@@ -93,6 +98,7 @@ def build_aruco_entries(
                 id=int(det.id),
                 center_px=(int(det.center_px[0]), int(det.center_px[1])),
                 estado=estado,
+                xyz_mm=marker_xyz_mm,
                 tvec_m=tvec_m,
             )
         )
@@ -135,13 +141,20 @@ def process_camera_step(
     homography: Any,
     use_stl_render: bool,
     executor: ThreadPoolExecutor | None,
+    enable_ball_detection: bool = True,
 ) -> FrameStepResult:
     """Process one camera frame and return all output artifacts.
 
     This is the main vision processing pipeline: detection → extraction → payload building.
     """
-    aruco_result, det = detect_aruco_and_ball(frame, aruco_reader, executor)
-    source_label = "COLOR"
+    if enable_ball_detection:
+        aruco_result, det = detect_aruco_and_ball(frame, aruco_reader, executor)
+        source_label = "COLOR"
+    else:
+        aruco_result = aruco_reader.process_frame(frame, draw=True)
+        det = None
+        source_label = "PAUSED"
+
     ball_center, ball_radius = extract_ball_data(det)
 
     if det:
@@ -163,7 +176,11 @@ def process_camera_step(
             min_pin_id=MIN_PIN_ID,
         )
 
-    aruco_entries, marker_states = build_aruco_entries(aruco_reader, aruco_result.detections)
+    aruco_entries, marker_states = build_aruco_entries(
+        aruco_reader,
+        aruco_result.detections,
+        homography,
+    )
     _, ball_state = build_ball_payload(
         aruco_result.frame,
         ball_center=ball_center,

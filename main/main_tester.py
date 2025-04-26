@@ -227,10 +227,16 @@ def _render_main_step(
     draw_performance_overlay(step.frame, fps)
 
     if debug_mode:
+        marker_debug = [
+            (m.id, m.xyz_mm, m.estado)
+            for m in sorted(step.marker_states, key=lambda marker: int(marker.id))
+        ]
         draw_debug_overlay(
             step.frame,
             use_multithread=use_multithread,
             source_label=step.source_label,
+            ball_xyz_mm=step.ball_state.xyz_mm,
+            marker_debug=marker_debug,
         )
         draw_debug_aruco_markers(step.frame, step.detections)
 
@@ -239,6 +245,7 @@ def _handle_main_key(
     key: int,
     debug_mode: bool,
     aruco_reader: ArucoReader,
+    robodk_worker: RoboDKWorker,
     cam_reader: Any,
     homography: Any,
 ) -> tuple[bool, bool, Any]:
@@ -261,6 +268,14 @@ def _handle_main_key(
             print("Calibration updated.")
             return False, debug_mode, cast(Any, new_calib["homography_matrix"])
         print("Calibration cancelled.")
+        return False, debug_mode, homography
+
+    if key in (ord("p"), ord("P")):
+        robodk_worker.toggle_ur3e_follow()
+        return False, debug_mode, homography
+
+    if key in (ord("g"), ord("G")):
+        robodk_worker.request_pick_and_drop()
         return False, debug_mode, homography
 
     return False, debug_mode, homography
@@ -297,12 +312,15 @@ def _process_main_frame(
     loop_start: float,
 ) -> Any:
     """Process one frame and render all overlays, returning the processing step result."""
+    enable_ball_detection = not vision_state.is_ball_detection_paused()
+
     step = process_camera_step(
         frame=frame,
         aruco_reader=aruco_reader,
         homography=homography,
         use_stl_render=use_stl_render,
         executor=executor if use_multithread else None,
+        enable_ball_detection=enable_ball_detection,
     )
 
     vision_state.update_frame(
@@ -348,7 +366,10 @@ def main() -> int:
     print("Compute backend: CPU multithread")
 
     print("\n=== Main Tester (No RoboDK) ===")
-    print("Keys: ESC/q=exit, r=regenerate calibration, F9=toggle debug, SPACE=reset pins")
+    print(
+        "Keys: ESC/q=exit, r=regenerate calibration, F9=toggle debug, "
+        "SPACE=reset pins, P=toggle UR3e prepick follow, G=UR3e pick+drop"
+    )
 
     executor: ThreadPoolExecutor | None = None
     try:
@@ -383,6 +404,7 @@ def main() -> int:
                 key=key,
                 debug_mode=debug_mode,
                 aruco_reader=aruco_reader,
+                robodk_worker=robodk_worker,
                 cam_reader=cam_reader,
                 homography=homography,
             )

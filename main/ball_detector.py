@@ -12,8 +12,8 @@ import numpy as np
 class BallDetectorConfig:
     """HSV and contour settings for color-based ball detection."""
 
-    hsv_lower: tuple[int, int, int] = (8, 60, 120)  # Light orange lower bound
-    hsv_upper: tuple[int, int, int] = (25, 220, 255)  # Light orange upper bound
+    hsv_lower: tuple[int, int, int] = (14, 154, 187)  # Light orange lower bound
+    hsv_upper: tuple[int, int, int] = (38, 255, 255)  # Light orange upper bound
     min_area: int = 500  # Minimum blob area in pixels
     blur_kernel: tuple[int, int] = (11, 11)  # Gaussian blur kernel size
     morph_kernel_size: tuple[int, int] = (9, 9)  # Morphological operations kernel

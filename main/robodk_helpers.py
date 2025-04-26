@@ -61,13 +61,34 @@ def get_frame(name: str) -> Any | None:
     return frame
 
 
-def create_or_update_target(name: str, robot: Any, pose: Any) -> Any:
-    """Create/reuse a target associated to robot and update its pose."""
+def get_target(name: str) -> Any | None:
+    """Get target by name, returning None if missing."""
     rdk = get_rdk()
     target = rdk.Item(name, ITEM_TYPE_TARGET)
     if not target.Valid():
-        parent: Any = robot.Parent() if robot is not None else None
-        target = rdk.AddTarget(name, parent, robot)
+        show_message(f"Error: Target {name} no encontrado.", SHOW_ERROR)
+        return None
+    return target
+
+
+def create_or_update_target(name: str, robot: Any, pose: Any, frame: Any | None = None) -> Any:
+    """Create/reuse a target associated to robot and update its pose.
+
+    If frame is provided, the target is attached to that frame so pose values are
+    interpreted in the expected reference system.
+    """
+    rdk = get_rdk()
+    target = rdk.Item(name, ITEM_TYPE_TARGET)
+    parent_frame: Any = frame
+    if parent_frame is None and robot is not None:
+        parent_frame = robot.Parent()
+
+    if not target.Valid():
+        target = rdk.AddTarget(name, parent_frame, robot)
+    elif parent_frame is not None:
+        # Keep target frame aligned with caller expectation when reusing an existing target.
+        target.setParent(parent_frame)
+
     target.setAsCartesianTarget()
     target.setPose(pose)
     return target
@@ -92,10 +113,14 @@ def move_to(robot: Any, obj: Any, move_type: str = "MoveJ") -> bool:
     if robot is None or obj is None:
         return False
 
-    if move_type == "MoveJ":
-        robot.MoveJ(obj)
-    elif move_type == "MoveL":
-        robot.MoveL(obj)
-    else:
+    try:
+        if move_type == "MoveJ":
+            robot.MoveJ(obj)
+        elif move_type == "MoveL":
+            robot.MoveL(obj)
+        else:
+            return False
+        return True
+    except Exception:
+        # Keep control loop alive when target is unreachable.
         return False
-    return True

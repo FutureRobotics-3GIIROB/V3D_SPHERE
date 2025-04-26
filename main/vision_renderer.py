@@ -24,6 +24,8 @@ def draw_debug_overlay(
     frame: Any,
     use_multithread: bool,
     source_label: str,
+    ball_xyz_mm: tuple[float, float, float],
+    marker_debug: list[tuple[int, tuple[float, float, float] | None, str]],
 ) -> None:
     """Draw runtime debug details while debug mode is active."""
     debug_lines = [
@@ -31,7 +33,17 @@ def draw_debug_overlay(
         "Backend: CPU",
         f"Multithread CPU: {use_multithread}",
         f"Ball source: {source_label}",
+        f"Ball xyz_mm: ({ball_xyz_mm[0]:.1f}, {ball_xyz_mm[1]:.1f}, {ball_xyz_mm[2]:.1f})",
     ]
+
+    for marker_id, xyz_mm, estado in marker_debug[:4]:
+        if xyz_mm is None:
+            debug_lines.append(f"Pin {marker_id}: xyz=n/a estado={estado}")
+        else:
+            debug_lines.append(
+                f"Pin {marker_id}: ({xyz_mm[0]:.1f}, {xyz_mm[1]:.1f}, {xyz_mm[2]:.1f}) {estado}"
+            )
+
     y = 88
     for line in debug_lines:
         cv2.putText(

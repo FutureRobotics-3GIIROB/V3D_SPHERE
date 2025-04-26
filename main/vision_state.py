@@ -26,6 +26,7 @@ class MarkerState:
     id: int
     center_px: tuple[int, int]
     estado: str  # "up" or "down"
+    xyz_mm: tuple[float, float, float] | None = None
     tvec_m: tuple[float, float, float] | None = None
     timestamp: float = field(default_factory=time.time)
 
@@ -136,6 +137,7 @@ class SharedVisionState:
                         "id": m.id,
                         "center_px": m.center_px,
                         "estado": m.estado,
+                        "xyz_mm": m.xyz_mm,
                         "tvec_m": m.tvec_m,
                     }
                     for m in self._current_frame.markers
