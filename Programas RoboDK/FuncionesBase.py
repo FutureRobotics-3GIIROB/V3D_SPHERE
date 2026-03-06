@@ -51,3 +51,17 @@ def getItem(nombre, tipo=None):
         print(f"Error: Objeto {nombre} no encontrado.", SHOW_ERROR)
         return None
     return item
+
+def createOrUpdateTarget(nombre, robot, pose):
+    """
+    Crea (o reutiliza) un target con `nombre` asociado al `robot` y
+    le asigna la `pose` indicada (objeto Mat de robomath).
+    Devuelve el item target.
+    """
+    rdk = getRDK()
+    target = rdk.Item(nombre, ITEM_TYPE_TARGET)
+    if not target.Valid():
+        target = rdk.AddTarget(nombre, 0, robot)
+    target.setAsCartesianTarget()
+    target.setPose(pose)
+    return target
