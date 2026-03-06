@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
 
-HSV_LOWER = np.array([0, 51, 0])
-HSV_UPPER = np.array([121, 255, 217])
+HSV_LOWER = np.array([14, 51, 0])
+HSV_UPPER = np.array([72, 255, 217])
 
 MIN_AREA = 500  # minimum blob area in pixels
 

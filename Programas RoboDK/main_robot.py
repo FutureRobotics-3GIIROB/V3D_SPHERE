@@ -18,7 +18,7 @@ from qr_depth import QRDepth, focal_length, pixel_to_xyz
 from tracker import BallTracker
 from FuncionesBase import getRobot, getFrame, createOrUpdateTarget
 from FuncionesRobot import moveTo, setSpeed
-from robodk.robomath import transl
+from robodk.robomath import transl, roty
 from robodk.robolink import TargetReachError
 
 # ── Configuración ─────────────────────────────────────────────────────────────
@@ -152,44 +152,52 @@ def _is_reachable(robot, pose) -> bool:
         return False
 
 
-def _move_closest(robot, target_pose, steps: int = 8) -> bool:
+def _move_closest(robot, target_pose, steps: int = 10) -> bool:
     """
-    Mueve el robot lo más cerca posible de target_pose.
-    Si no es alcanzable, hace búsqueda binaria entre la pose actual
-    y el objetivo para encontrar el punto alcanzable más lejano.
-    Devuelve True si llegó al objetivo, False si solo se aproximó.
+    Intenta mover el robot al objetivo.
+    Si no es alcanzable, se acerca lo máximo posible.
+    Nunca lanza excepción.
     """
-    if _is_reachable(robot, target_pose):
+
+    try:
         robot.MoveJ(target_pose)
         return True
+    except TargetReachError:
+        pass
 
     current = robot.Pose()
+
     tx, ty, tz = _pose_xyz(current)
     gx, gy, gz = _pose_xyz(target_pose)
 
     lo, hi = 0.0, 1.0
-    best_pose = None
+    best_pose = current
 
+    # Búsqueda binaria
     for _ in range(steps):
+
         mid = (lo + hi) / 2.0
+
         interp = transl(
             tx + mid * (gx - tx),
             ty + mid * (gy - ty),
             tz + mid * (gz - tz),
         )
-        if _is_reachable(robot, interp):
+
+        try:
+            robot.MoveJ(interp, blocking=False)
             best_pose = interp
             lo = mid
-        else:
+        except TargetReachError:
             hi = mid
 
-    if best_pose is not None:
-        try:
-            robot.MoveJ(best_pose)
-        except TargetReachError:
-            pass
-    return False
+    # Intentar mover al mejor punto encontrado
+    try:
+        robot.MoveJ(best_pose)
+    except TargetReachError:
+        pass
 
+    return False
 
 # ── Hilo de robot ─────────────────────────────────────────────────────────────
 def robot_loop() -> None:
@@ -221,16 +229,16 @@ def robot_loop() -> None:
 
         if pos and pos["xyz_mm"] is not None:
             xyz = pos["xyz_mm"]
-            xyz_flat = [xyz[0], xyz[1], 0]
+            xyz_flat = [xyz[1], xyz[0], 0]
 
             if xyz_flat != last_xyz:
-                bx, by, bz = xyz[0], xyz[1], xyz[2]
+                bx, by, bz = xyz[1]-265.000, xyz[0], 50
 
                 # Mover robot Bola (como antes)
                 moveTo(bola, xyz_flat, "MoveJ")
 
                 # Crear/actualizar target en la posición exacta de la pelota (visual)
-                ball_pose = transl(bx, by, bz)
+                ball_pose = transl(bx, by, bz)*roty(3.1416)
                 createOrUpdateTarget(TARGET_NAME, ur3e, ball_pose)
 
                 # Mover UR3e lo más cerca posible del objetivo
