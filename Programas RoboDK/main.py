@@ -1,14 +1,129 @@
 import json, time, cv2
+import numpy as np
 
 from ball_detector import detect_ball, draw_ball
 from qr_depth import QRDepth, focal_length, pixel_to_xyz
 from tracker import BallTracker
+from aruco_lib import (
+    ArucoTracker,
+    list_available_cameras,
+    load_camera_config,
+    save_camera_config,
+    QR_WORLD_REFERENCE_ID,
+    BALL_ARUCO_ID,
+    MIN_BOLO_ID
+)
 
 OUTPUT = 'positions.json'
 REDETECT_EVERY = 5   # frames before re-scanning when lost
 
+# Modos de detección
+USE_ARUCO_TRACKER = True  # Si True, usa ArucoTracker; si False, usa detección original
 
-def main():
+
+def main_with_aruco():
+    """
+    Modo principal usando ArucoTracker para detección de ArUcos, QR y pelota.
+    """
+    print("[INFO] Iniciando modo con ArucoTracker...")
+    
+    # Crear tracker de ArUcos
+    tracker = ArucoTracker(
+        camera_source=None,  # Usa config guardada o cámara 0
+        marker_size_m=0.05,
+        show_axes=False,
+        debug_mode=True
+    )
+    
+    if not tracker.start():
+        print("[ERROR] No se pudo iniciar el tracker de ArUcos")
+        return
+    
+    # Tracker de pelota por color (backup)
+    ball_tracker = BallTracker()
+    lost_count = 0
+    
+    print("[INFO] Presiona ESC para salir")
+    
+    try:
+        while True:
+            # Obtener frame procesado del tracker
+            frame_data = tracker.get_latest_frame()
+            if frame_data is None:
+                time.sleep(0.01)
+                continue
+            
+            frame = frame_data.frame
+            h, w = frame.shape[:2]
+            
+            # Buscar pelota por ArUco (ID=1) o por color
+            ball_position = None
+            ball_center_px = None
+            
+            # 1. Primero buscar ArUco de la pelota
+            for det in frame_data.aruco_detections:
+                if det.id == BALL_ARUCO_ID:
+                    ball_center_px = det.center_px
+                    if det.world_position:
+                        ball_position = {
+                            'pixel': list(ball_center_px),
+                            'xyz_mm': [det.world_position[0] * 1000,
+                                       det.world_position[1] * 1000,
+                                       det.world_position[2] * 1000]
+                        }
+                    break
+            
+            # 2. Si no hay ArUco de pelota, buscar por color
+            if ball_center_px is None:
+                ball_det = detect_ball(frame)
+                if ball_det:
+                    ball_center_px = ball_det['center']
+                    draw_ball(frame, ball_det, color=(0, 255, 0))
+                    
+                    # Intentar obtener profundidad del QR
+                    if frame_data.qr_detections:
+                        # Usar el primer QR detectado para profundidad
+                        qr_text = frame_data.qr_detections[0].get('text', '')
+                        try:
+                            qr_size_mm = float(qr_text.strip()) if qr_text else None
+                            if qr_size_mm:
+                                f_px = focal_length(w)
+                                cx, cy = w / 2.0, h / 2.0
+                                # Calcular Z aproximada
+                                xyz = pixel_to_xyz(ball_center_px[0], ball_center_px[1],
+                                                   100, f_px, cx, cy)  # Z placeholder
+                                ball_position = {
+                                    'pixel': list(ball_center_px),
+                                    'xyz_mm': list(xyz)
+                                }
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Guardar posición
+            if ball_position:
+                print(json.dumps(ball_position))
+                try:
+                    with open(OUTPUT, 'w') as f:
+                        json.dump(ball_position, f)
+                except OSError:
+                    pass
+            
+            # Mostrar
+            cv2.imshow('V3D Tracking (ArUco Mode)', frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+    
+    finally:
+        tracker.stop()
+        cv2.destroyAllWindows()
+
+
+def main_original():
+    """
+    Modo original sin ArucoTracker (solo QR + pelota por color).
+    """
+    print("[INFO] Iniciando modo original...")
+    
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         raise RuntimeError('Cannot open webcam')
@@ -101,6 +216,14 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+
+
+def main():
+    """Punto de entrada principal."""
+    if USE_ARUCO_TRACKER:
+        main_with_aruco()
+    else:
+        main_original()
 
 
 if __name__ == '__main__':

@@ -3,7 +3,7 @@ main_robot.py
 ─────────────
 Combina el tracking de la pelota con el control del robot en RoboDK.
 
-  • Hilo de cámara  → detecta la pelota y actualiza la variable global
+  • Hilo de cámara  → detecta la pelota (por ArUco o color) y actualiza la variable global
                       `ball_position` con los datos pixel + XYZ en mm.
   • Hilo de robot   → lee `ball_position` y mueve el robot "bola" de RoboDK
                       a la posición detectada.
@@ -16,6 +16,14 @@ import cv2
 from ball_detector import detect_ball, draw_ball
 from qr_depth import QRDepth, focal_length, pixel_to_xyz
 from tracker import BallTracker
+from aruco_lib import (
+    ArucoTracker,
+    list_available_cameras,
+    load_camera_config,
+    QR_WORLD_REFERENCE_ID,
+    BALL_ARUCO_ID,
+    MIN_BOLO_ID
+)
 from FuncionesBase import getRobot, getFrame, createOrUpdateTarget
 from FuncionesRobot import moveTo, setSpeed
 from robodk.robomath import transl, roty
@@ -29,7 +37,8 @@ TARGET_FRAME   = "BallTarget" # nombre del frame objetivo en RoboDK
 REDETECT_EVERY = 5            # frames sin tracking antes de re-detectar
 ROBOT_SPEED_LIN  = 200        # mm/s   velocidad lineal
 ROBOT_SPEED_ANG  = 30         # deg/s  velocidad angular
-
+# Modo de detección: True = usar ArucoTracker, False = solo detección por color
+USE_ARUCO_TRACKER = True
 
 # ── Variable global compartida ────────────────────────────────────────────────
 # Formato: {'pixel': [px, py], 'xyz_mm': [X, Y, Z]}  ó  None
@@ -37,7 +46,97 @@ ball_position: dict | None = None
 _lock = threading.Lock()      # acceso seguro entre hilos
 
 
-# ── Hilo de cámara ────────────────────────────────────────────────────────────
+# ── Hilo de cámara (con ArucoTracker) ────────────────────────────────────────
+def camera_loop_aruco() -> None:
+    """Captura video usando ArucoTracker, detecta pelota y actualiza ball_position."""
+    global ball_position
+
+    # Crear tracker de ArUcos
+    tracker = ArucoTracker(
+        camera_source=None,  # Usa config guardada
+        marker_size_m=0.05,
+        show_axes=False,
+        debug_mode=False
+    )
+    
+    if not tracker.start():
+        print("[Cámara] ERROR: No se pudo iniciar ArucoTracker")
+        return
+    
+    print("[Cámara] ArucoTracker iniciado")
+    
+    try:
+        while True:
+            # Obtener frame procesado
+            frame_data = tracker.get_latest_frame()
+            if frame_data is None:
+                time.sleep(0.01)
+                continue
+            
+            frame = frame_data.frame
+            h, w = frame.shape[:2]
+            
+            # Buscar pelota por ArUco (ID=1) primero
+            ball_found = False
+            for det in frame_data.aruco_detections:
+                if det.id == BALL_ARUCO_ID:
+                    ball_center_px = det.center_px
+                    if det.world_position:
+                        # Convertir metros a mm
+                        xyz = [
+                            det.world_position[0] * 1000,
+                            det.world_position[1] * 1000,
+                            det.world_position[2] * 1000
+                        ]
+                        pos = {"pixel": list(ball_center_px), "xyz_mm": xyz}
+                        
+                        with _lock:
+                            ball_position = pos
+                        
+                        ball_found = True
+                        break
+            
+            # Si no hay ArUco de pelota, buscar por color
+            if not ball_found:
+                ball_det = detect_ball(frame)
+                if ball_det:
+                    ball_center_px = ball_det['center']
+                    draw_ball(frame, ball_det, color=(0, 255, 0))
+                    
+                    # Usar profundidad de QR si está disponible
+                    xyz_mm = None
+                    for qr_det in frame_data.qr_detections:
+                        qr_text = qr_det.get('text', '')
+                        if qr_text:
+                            try:
+                                qr_size_mm = float(qr_text.strip())
+                                if qr_size_mm > 0:
+                                    f_px = focal_length(w)
+                                    cx, cy = w / 2.0, h / 2.0
+                                    # Calcular posición aproximada
+                                    xyz_mm = pixel_to_xyz(
+                                        ball_center_px[0], ball_center_px[1],
+                                        100, f_px, cx, cy  # Z placeholder
+                                    )
+                                    break
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    pos = {"pixel": list(ball_center_px), "xyz_mm": list(xyz_mm) if xyz_mm else None}
+                    with _lock:
+                        ball_position = pos
+            
+            # Mostrar frame
+            cv2.imshow("V3D Tracking (Robot)", frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+    
+    finally:
+        tracker.stop()
+        cv2.destroyAllWindows()
+
+
+# ── Hilo de cámara (modo original) ───────────────────────────────────────────
 def camera_loop() -> None:
     """Captura video, detecta la pelota y actualiza ball_position."""
     global ball_position
@@ -259,7 +358,12 @@ def main() -> None:
     robot_thread.start()
 
     # La cámara corre en el hilo principal (OpenCV en Windows lo requiere)
-    camera_loop()
+    if USE_ARUCO_TRACKER:
+        print("[Main] Usando ArucoTracker para detección")
+        camera_loop_aruco()
+    else:
+        print("[Main] Usando detección por color (modo original)")
+        camera_loop()
 
 
 if __name__ == "__main__":
