@@ -3,7 +3,7 @@ main_robot.py
 ─────────────
 Combina el tracking de la pelota con el control del robot en RoboDK.
 
-  • Hilo de cámara  → detecta la pelota y actualiza la variable global
+  • Hilo de cámara  → detecta la pelota (por ArUco o color) y actualiza la variable global
                       `ball_position` con los datos pixel + XYZ en mm.
   • Hilo de robot   → lee `ball_position` y mueve el robot "bola" de RoboDK
                       a la posición detectada.
@@ -14,8 +14,15 @@ import threading
 import cv2
 
 from ball_detector import detect_ball, draw_ball
-from qr_depth import QRDepth, focal_length, pixel_to_xyz
+from calibracion import HomographyCalibrator
 from tracker import BallTracker
+from aruco_lib import (
+    ArucoTracker,
+    list_available_cameras,
+    load_camera_config,
+    BALL_ARUCO_ID,
+    MIN_BOLO_ID
+)
 from FuncionesBase import getRobot, getFrame, createOrUpdateTarget
 from FuncionesRobot import moveTo, setSpeed
 from robodk.robomath import transl, roty
@@ -29,7 +36,8 @@ TARGET_FRAME   = "BallTarget" # nombre del frame objetivo en RoboDK
 REDETECT_EVERY = 5            # frames sin tracking antes de re-detectar
 ROBOT_SPEED_LIN  = 200        # mm/s   velocidad lineal
 ROBOT_SPEED_ANG  = 30         # deg/s  velocidad angular
-
+# Modo de detección: True = usar ArucoTracker, False = solo detección por color
+USE_ARUCO_TRACKER = True
 
 # ── Variable global compartida ────────────────────────────────────────────────
 # Formato: {'pixel': [px, py], 'xyz_mm': [X, Y, Z]}  ó  None
@@ -37,39 +45,120 @@ ball_position: dict | None = None
 _lock = threading.Lock()      # acceso seguro entre hilos
 
 
-# ── Hilo de cámara ────────────────────────────────────────────────────────────
-def camera_loop() -> None:
-    """Captura video, detecta la pelota y actualiza ball_position."""
+def camera_loop_aruco() -> None:
+    """Captura video usando ArucoTracker con homografía."""
     global ball_position
+
+    # Cargar calibración
+    calib_data = HomographyCalibrator.load_calibration()
+    if calib_data is None:
+        print("[Cámara] ERROR: No se encontró calibración")
+        print("[Cámara] Ejecuta: python calibracion.py --capture")
+        return
+    
+    homography = calib_data['homography_matrix']
+
+    tracker = ArucoTracker(
+        camera_source=0,
+        marker_size_m=0.05,
+        show_axes=False,
+        debug_mode=False
+    )
+    
+    if not tracker.start():
+        print("[Cámara] ERROR: No se pudo iniciar ArucoTracker")
+        return
+    
+    print("[Cámara] ArucoTracker iniciado")
+    
+    try:
+        while True:
+            frame_data = tracker.get_latest_frame()
+            if frame_data is None:
+                time.sleep(0.01)
+                continue
+            
+            frame = frame_data.frame
+            h, w = frame.shape[:2]
+            
+            ball_found = False
+            for det in frame_data.aruco_detections:
+                if det.id == BALL_ARUCO_ID:
+                    ball_center_px = det.center_px
+                    if det.world_position:
+                        xyz = [
+                            det.world_position[0] * 1000,
+                            det.world_position[1] * 1000,
+                            det.world_position[2] * 1000
+                        ]
+                        pos = {"pixel": list(ball_center_px), "xyz_mm": xyz}
+                        
+                        with _lock:
+                            ball_position = pos
+                        
+                        ball_found = True
+                        break
+            
+            if not ball_found:
+                ball_det = detect_ball(frame)
+                if ball_det:
+                    ball_center_px = ball_det['center']
+                    draw_ball(frame, ball_det, color=(0, 255, 0))
+                    
+                    point_transformed = HomographyCalibrator.transform_point(
+                        ball_center_px, homography)
+                    xyz_mm = list(point_transformed) + [0]
+                    
+                    pos = {"pixel": list(ball_center_px), "xyz_mm": xyz_mm}
+                    with _lock:
+                        ball_position = pos
+            
+            cv2.imshow("V3D Tracking (Robot)", frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+    
+    finally:
+        tracker.stop()
+        cv2.destroyAllWindows()
+
+
+# ── Hilo de cámara (modo original) ───────────────────────────────────────────
+def camera_loop() -> None:
+    """Captura video con homografía."""
+    global ball_position
+
+    # Cargar calibración
+    calib_data = HomographyCalibrator.load_calibration()
+    if calib_data is None:
+        print("[Cámara] ERROR: No se encontró calibración")
+        print("[Cámara] Ejecuta: python calibracion.py --capture")
+        return
+    
+    homography = calib_data['homography_matrix']
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        raise RuntimeError("No se puede abrir la webcam")
+        raise RuntimeError("No se puede abrir webcam")
 
-    # Calentamiento de la cámara
     for _ in range(30):
         cap.read()
     time.sleep(0.1)
 
     ret, frame = cap.read()
     if not ret:
-        raise RuntimeError("Sin frame de la webcam")
+        raise RuntimeError("Sin frame de webcam")
 
     h, w = frame.shape[:2]
-    f_px = focal_length(w)
-    cx, cy = w / 2.0, h / 2.0
-    print(f"[Cámara] Frame {w}x{h}  |  focal ~{f_px:.0f} px")
+    print(f"[Cámara] Frame {w}x{h}")
 
-    # Inicialización del tracker
     tracker = BallTracker()
     det = detect_ball(frame)
     if det:
         tracker.init(frame, det["bbox"])
         print(f"[Cámara] Pelota encontrada en {det['center']}")
     else:
-        print("[Cámara] Pelota no encontrada — buscando...")
+        print("[Cámara] Buscando pelota...")
 
-    qr = QRDepth()
     lost_count = 0
 
     while True:
@@ -77,17 +166,11 @@ def camera_loop() -> None:
         if not ret:
             break
 
-        # Actualizar profundidad por QR
-        qr.update(frame, f_px)
-        qr.draw(frame)
-
-        # Actualizar tracker
         if tracker.ok or tracker.bbox is not None:
             ok, _ = tracker.update(frame)
         else:
             ok = False
 
-        # Re-detectar si se pierde la pelota
         last_det = None
         if not ok:
             lost_count += 1
@@ -103,21 +186,15 @@ def camera_loop() -> None:
         else:
             lost_count = 0
 
-        # Dibujar círculo de detección (usa resultado cacheado, sin llamada extra)
         draw_ball(frame, last_det)
 
-        # Calcular posición XYZ y actualizar variable global
         c = tracker.center
         if c and tracker.ok:
-            if qr.depth_z is not None:
-                xyz = pixel_to_xyz(c[0], c[1], qr.depth_z, f_px, cx, cy)
-                pos = {"pixel": list(c), "xyz_mm": list(xyz)}
-                label = f"X:{xyz[0]}  Y:{xyz[1]}  Z:{xyz[2]}"
-            else:
-                pos = {"pixel": list(c), "xyz_mm": None}
-                label = "Sin profundidad QR"
+            point_transformed = HomographyCalibrator.transform_point(c, homography)
+            xyz = list(point_transformed) + [0]
+            pos = {"pixel": list(c), "xyz_mm": xyz}
+            label = f"X:{xyz[0]:.1f}  Y:{xyz[1]:.1f}  Z:{xyz[2]:.1f}"
 
-            # ── Actualizar variable global de forma segura ──
             with _lock:
                 ball_position = pos
 
@@ -127,7 +204,7 @@ def camera_loop() -> None:
             tracker.draw(frame, "PERDIDA")
 
         cv2.imshow("V3D Tracking", frame)
-        if cv2.waitKey(30) & 0xFF == 27:   # ESC para salir
+        if cv2.waitKey(30) & 0xFF == 27:
             break
 
     cap.release()
@@ -259,7 +336,12 @@ def main() -> None:
     robot_thread.start()
 
     # La cámara corre en el hilo principal (OpenCV en Windows lo requiere)
-    camera_loop()
+    if USE_ARUCO_TRACKER:
+        print("[Main] Usando ArucoTracker para detección")
+        camera_loop_aruco()
+    else:
+        print("[Main] Usando detección por color (modo original)")
+        camera_loop()
 
 
 if __name__ == "__main__":

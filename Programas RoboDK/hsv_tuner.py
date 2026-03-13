@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 
 # ── default starting values (current ball_detector.py values) ─────────────
-DEFAULTS = dict(H_min=35, H_max=85, S_min=50, S_max=255, V_min=50, V_max=255)
+DEFAULTS = dict(H_min=48, H_max=93, S_min=26, S_max=210, V_min=0, V_max=132)
 
 WINDOW = "HSV Tuner"
 
