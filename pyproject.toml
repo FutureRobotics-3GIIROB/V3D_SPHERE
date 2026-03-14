@@ -1,0 +1,10 @@
+[project]
+name = "v3d-sphere"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python>=4.13.0.92",
+    "robodk>=5.9.4",
+]
