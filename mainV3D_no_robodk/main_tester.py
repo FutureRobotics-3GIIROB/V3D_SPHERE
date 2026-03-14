@@ -158,7 +158,7 @@ def main() -> int:
         print("Pin rendering: virtual fallback (bolo.stl not found)")
 
     print("\n=== Main Tester (No RoboDK) ===")
-    print("Keys: ESC/q=exit, r=regenerate calibration, F9=toggle debug")
+    print("Keys: ESC/q=exit, r=regenerate calibration, F9=toggle debug, SPACE=reset pins")
 
     try:
         executor: Optional[ThreadPoolExecutor] = None
@@ -184,9 +184,19 @@ def main() -> int:
             source_label = "COLOR"
             det = precomputed_ball
             ball_center = None
+            ball_radius = 0.0
             if det:
                 ball_center = det["center"]
+                ball_radius = float(det.get("radius", 0.0))
                 draw_ball(aruco_result.frame, det, color=(0, 255, 0), label="BALL-COLOR")
+
+            # Trigger pin-fall animation when the ball overlaps a pin marker.
+            aruco_reader.update_pin_targets_from_ball(
+                aruco_result.detections,
+                ball_center_px=ball_center,
+                ball_radius_px=ball_radius,
+                min_pin_id=MIN_PIN_ID,
+            )
 
             if use_stl_render:
                 bolo_count = sum(1 for d in aruco_result.detections if int(d.id) >= MIN_PIN_ID)
@@ -207,15 +217,28 @@ def main() -> int:
                 2,
             )
 
+            # Build ArUco entries (all detected markers).
+            aruco_entries = []
+            for det in aruco_result.detections:
+                pin_state = aruco_reader._get_pin_state(int(det.id)) if int(det.id) >= MIN_PIN_ID else None
+                fallen = pin_state is not None and pin_state.current_tilt_deg >= aruco_reader.pin_fall_target_deg - 1.0
+                entry = {
+                    "id": int(det.id),
+                    "center_px": [int(det.center_px[0]), int(det.center_px[1])],
+                    "estado": "down" if fallen else "up",
+                }
+                if det.rvec is not None and det.tvec is not None:
+                    entry["tvec_m"] = [float(det.tvec[0]), float(det.tvec[1]), float(det.tvec[2])]
+                aruco_entries.append(entry)
+
             if ball_center is not None:
                 x_mm, y_mm = HomographyCalibrator.transform_point(ball_center, homography)
-                payload = {
+                ball_payload = {
                     "pixel": [int(ball_center[0]), int(ball_center[1])],
                     "xyz_mm": [float(x_mm), float(y_mm), 0.0],
+                    "radius_px": float(ball_radius),
                     "source": source_label,
                 }
-                _write_output(payload)
-
                 cv2.putText(
                     aruco_result.frame,
                     f"X:{x_mm:.1f} Y:{y_mm:.1f} Z:0.0 [{source_label}]",
@@ -225,6 +248,14 @@ def main() -> int:
                     (255, 255, 255),
                     2,
                 )
+            else:
+                ball_payload = None
+
+            payload = {
+                "ball": ball_payload,
+                "aruco_markers": aruco_entries,
+            }
+            _write_output(payload)
 
             elapsed = time.perf_counter() - loop_start
             frame_times.append(elapsed)
@@ -259,6 +290,10 @@ def main() -> int:
 
             if key in (27, ord("q"), ord("Q"), ord("Q") & 0xFF):
                 break
+
+            if key == 32:  # SPACE — reset all pins to standing.
+                aruco_reader.reset_all_pins()
+                print("Pins reset.")
 
             if key in (ord("r"), ord("R")):
                 print("Regenerating calibration...")

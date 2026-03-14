@@ -180,6 +180,7 @@ def prompt_default_camera() -> CameraSource:
 
     print("\n=== Camera Selection ===")
     if AUTO_PROBE_CAMERAS:
+        print(f"Local cameras found: {len(local_cameras)}")
         if SHOW_PROBED_CAMERAS:
             print("Local cameras detected:")
             if local_cameras:
@@ -198,6 +199,7 @@ def prompt_default_camera() -> CameraSource:
     user_input = input("Camera source [Enter to reuse last]: ").strip()
     if user_input.lower() == "scan":
         local_cameras = list_local_cameras()
+        print(f"Local cameras found: {len(local_cameras)}")
         print("Local cameras detected:")
         if local_cameras:
             for cam_index in local_cameras:

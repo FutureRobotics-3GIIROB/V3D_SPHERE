@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import struct
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -27,6 +28,14 @@ class ArucoFrameResult:
 
     frame: np.ndarray
     detections: List[ArucoDetection] = field(default_factory=list)
+
+
+@dataclass
+class PinAnimationState:
+    """Animation state for one pin marker."""
+
+    current_tilt_deg: float = 0.0
+    target_tilt_deg: float = 0.0
 
 
 class STLMesh:
@@ -84,12 +93,18 @@ class ArucoObject:
         dist_coeffs: np.ndarray,
         base_rvec: np.ndarray,
         base_tvec: np.ndarray,
+        extra_rvec: Optional[np.ndarray] = None,
+        fallen: bool = False,
     ) -> None:
         """Project model triangles and draw wireframe over image."""
         if self.stl_mesh is None:
             return
 
+        draw_color = (0, 0, 255) if fallen else self.color
+
         rvec = np.asarray(base_rvec, dtype=np.float32).reshape(3, 1) + self.offset_rvec.reshape(3, 1)
+        if extra_rvec is not None:
+            rvec = rvec + np.asarray(extra_rvec, dtype=np.float32).reshape(3, 1)
         tvec = np.asarray(base_tvec, dtype=np.float32).reshape(3, 1) + self.offset_tvec.reshape(3, 1)
 
         triangles = self.stl_mesh.triangles * self.scale
@@ -102,7 +117,7 @@ class ArucoObject:
                 dist_coeffs,
             )
             poly = pts_2d.reshape(-1, 2).astype(np.int32)
-            cv2.polylines(frame, [poly], True, self.color, 1, cv2.LINE_AA)
+            cv2.polylines(frame, [poly], True, draw_color, 1, cv2.LINE_AA)
 
 
 class ArucoReader:
@@ -146,6 +161,95 @@ class ArucoReader:
         self.camera_matrix: Optional[np.ndarray] = None
         self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
         self.objects: Dict[int, ArucoObject] = {}
+        self.pin_animation: Dict[int, PinAnimationState] = {}
+        self.pin_fall_speed_deg_per_s: float = 220.0
+        self.pin_fall_target_deg: float = 90.0
+        self._last_process_ts: float = time.perf_counter()
+        # Cache last known corners so occlusion by the ball doesn't break detection.
+        self._last_seen_corners: Dict[int, np.ndarray] = {}
+
+    def _get_pin_state(self, marker_id: int) -> PinAnimationState:
+        """Get or create pin animation state by marker id."""
+        if marker_id not in self.pin_animation:
+            self.pin_animation[marker_id] = PinAnimationState()
+        return self.pin_animation[marker_id]
+
+    def _step_pin_animation(self, dt: float) -> None:
+        """Advance pin animations toward their target tilt."""
+        if dt <= 0:
+            return
+        step = self.pin_fall_speed_deg_per_s * dt
+        for state in self.pin_animation.values():
+            if state.current_tilt_deg < state.target_tilt_deg:
+                state.current_tilt_deg = min(state.current_tilt_deg + step, state.target_tilt_deg)
+
+    @staticmethod
+    def _is_ball_over_marker(
+        marker_corners: np.ndarray,
+        ball_center_px: Tuple[int, int],
+        ball_radius_px: float,
+    ) -> bool:
+        """Return True when ball center is over marker or close enough to its center."""
+        corners = marker_corners.reshape(4, 2).astype(np.float32)
+        center = corners.mean(axis=0)
+        half_w = np.linalg.norm(corners[1] - corners[0]) * 0.5
+        half_h = np.linalg.norm(corners[2] - corners[1]) * 0.5
+        marker_radius = max(half_w, half_h)
+
+        dx = float(ball_center_px[0] - center[0])
+        dy = float(ball_center_px[1] - center[1])
+        dist = float(np.hypot(dx, dy))
+
+        threshold = marker_radius + max(float(ball_radius_px), 6.0)
+        if dist <= threshold:
+            return True
+
+        # Also accept strict inside polygon.
+        inside = cv2.pointPolygonTest(corners.astype(np.int32), ball_center_px, False)
+        return inside >= 0
+
+    def reset_all_pins(self) -> None:
+        """Reset every pin animation back to standing (0 degrees)."""
+        for state in self.pin_animation.values():
+            state.current_tilt_deg = 0.0
+            state.target_tilt_deg = 0.0
+
+    def update_pin_targets_from_ball(
+        self,
+        detections: Sequence[ArucoDetection],
+        ball_center_px: Optional[Tuple[int, int]],
+        ball_radius_px: float = 0.0,
+        min_pin_id: int = 2,
+    ) -> None:
+        """Set pin target tilt to 90 degrees when ball passes over marker.
+
+        Uses the last cached marker position when the ball occludes the
+        ArUco tag so that detection loss doesn't prevent the pin from
+        falling.
+        """
+        if ball_center_px is None:
+            return
+
+        checked_ids: set = set()
+
+        # Check currently detected markers first.
+        for det in detections:
+            marker_id = int(det.id)
+            if marker_id < int(min_pin_id):
+                continue
+            checked_ids.add(marker_id)
+            if self._is_ball_over_marker(det.corners, ball_center_px, ball_radius_px):
+                self._get_pin_state(marker_id).target_tilt_deg = self.pin_fall_target_deg
+
+        # For markers not visible this frame use last cached corners.
+        for marker_id, cached_corners in self._last_seen_corners.items():
+            if marker_id < int(min_pin_id) or marker_id in checked_ids:
+                continue
+            state = self._get_pin_state(marker_id)
+            # Only trigger fall if not already falling.
+            if state.target_tilt_deg < self.pin_fall_target_deg:
+                if self._is_ball_over_marker(cached_corners, ball_center_px, ball_radius_px):
+                    state.target_tilt_deg = self.pin_fall_target_deg
 
     def _filter_candidates(
         self,
@@ -220,6 +324,11 @@ class ArucoReader:
 
     def process_frame(self, frame: np.ndarray, draw: bool = True) -> ArucoFrameResult:
         """Detect markers, estimate pose and render optional models."""
+        now = time.perf_counter()
+        dt = now - self._last_process_ts
+        self._last_process_ts = now
+        self._step_pin_animation(dt)
+
         output = frame.copy() if draw else frame
         if self.camera_matrix is None:
             self.set_camera_params(frame.shape[:2])
@@ -255,6 +364,9 @@ class ArucoReader:
             corner_2d = marker_corners.reshape(4, 2)
             center = corner_2d.mean(axis=0).astype(int)
 
+            # Cache this marker's last known corners.
+            self._last_seen_corners[int(marker_id)] = corner_2d.copy()
+
             det = ArucoDetection(
                 id=int(marker_id),
                 center_px=(int(center[0]), int(center[1])),
@@ -273,12 +385,17 @@ class ArucoReader:
                 det.tvec = tvec
 
                 if draw and int(marker_id) in self.objects:
+                    tilt_deg = self._get_pin_state(int(marker_id)).current_tilt_deg
+                    fallen = tilt_deg >= self.pin_fall_target_deg - 1.0
+                    dynamic_rvec = np.array([np.deg2rad(tilt_deg), 0.0, 0.0], dtype=np.float32)
                     self.objects[int(marker_id)].draw(
                         output,
                         self.camera_matrix,
                         self.dist_coeffs,
                         rvec,
                         tvec,
+                        extra_rvec=dynamic_rvec,
+                        fallen=fallen,
                     )
 
                 if draw:
@@ -296,8 +413,8 @@ class ArucoReader:
 
         return result
 
-    @staticmethod
     def draw_virtual_pins(
+        self,
         frame: np.ndarray,
         detections: Sequence[ArucoDetection],
         min_pin_id: int = 2,
@@ -308,19 +425,25 @@ class ArucoReader:
             if int(det.id) < int(min_pin_id):
                 continue
 
+            state = self._get_pin_state(int(det.id))
+            fallen = state.current_tilt_deg >= self.pin_fall_target_deg - 1.0
+            pin_color = (0, 0, 255) if fallen else (255, 120, 0)
+            outline_color = (0, 0, 200) if fallen else (0, 220, 255)
+            label_color = (0, 0, 255) if fallen else (255, 220, 0)
+
             corners = det.corners.astype(np.int32)
             center = (int(det.center_px[0]), int(det.center_px[1]))
 
             # Marker outline as the pin base reference.
-            cv2.polylines(frame, [corners], True, (0, 220, 255), 2, cv2.LINE_AA)
+            cv2.polylines(frame, [corners], True, outline_color, 2, cv2.LINE_AA)
 
             # Lightweight pin icon.
             pin_top = (center[0], center[1] - 26)
             pin_bottom_left = (center[0] - 8, center[1] + 8)
             pin_bottom_right = (center[0] + 8, center[1] + 8)
             triangle = np.array([pin_top, pin_bottom_left, pin_bottom_right], dtype=np.int32)
-            cv2.fillConvexPoly(frame, triangle, (255, 120, 0))
-            cv2.circle(frame, (center[0], center[1] + 10), 10, (255, 120, 0), 2)
+            cv2.fillConvexPoly(frame, triangle, pin_color)
+            cv2.circle(frame, (center[0], center[1] + 10), 10, pin_color, 2)
 
             cv2.putText(
                 frame,
@@ -328,7 +451,7 @@ class ArucoReader:
                 (center[0] - 34, center[1] - 36),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
-                (255, 220, 0),
+                label_color,
                 2,
             )
             count += 1

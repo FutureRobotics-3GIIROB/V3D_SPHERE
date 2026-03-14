@@ -11,8 +11,9 @@ import numpy as np
 class BallDetectorConfig:
     """HSV and contour settings for color-based ball detection."""
 
-    hsv_lower: Tuple[int, int, int] = (48, 26, 0)
-    hsv_upper: Tuple[int, int, int] = (93, 210, 132)
+    # Light orange target range in HSV (OpenCV scale: H 0-179).
+    hsv_lower: Tuple[int, int, int] = (8, 60, 120)
+    hsv_upper: Tuple[int, int, int] = (25, 220, 255)
     min_area: int = 500
     blur_kernel: Tuple[int, int] = (11, 11)
     morph_kernel_size: Tuple[int, int] = (9, 9)
