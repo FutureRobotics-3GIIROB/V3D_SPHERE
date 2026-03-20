@@ -210,3 +210,4 @@ marimo/_lsp/
 __marimo__/
 
 tracking/positions.json
+.DS_Store
