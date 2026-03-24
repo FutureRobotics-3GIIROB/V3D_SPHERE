@@ -1,7 +1,9 @@
+"""Ball detection using HSV color range and contour analysis."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -11,16 +13,17 @@ import numpy as np
 class BallDetectorConfig:
     """HSV and contour settings for color-based ball detection."""
 
-    # Light orange target range in HSV (OpenCV scale: H 0-179).
-    hsv_lower: Tuple[int, int, int] = (8, 60, 120)
-    hsv_upper: Tuple[int, int, int] = (25, 220, 255)
-    min_area: int = 500
-    blur_kernel: Tuple[int, int] = (11, 11)
-    morph_kernel_size: Tuple[int, int] = (9, 9)
-    morph_iterations: int = 2
+    hsv_lower: tuple[int, int, int] = (8, 60, 120)  # Light orange lower bound
+    hsv_upper: tuple[int, int, int] = (25, 220, 255)  # Light orange upper bound
+    min_area: int = 500  # Minimum blob area in pixels
+    blur_kernel: tuple[int, int] = (11, 11)  # Gaussian blur kernel size
+    morph_kernel_size: tuple[int, int] = (9, 9)  # Morphological operations kernel
+    morph_iterations: int = 2  # Number of open/close iterations
 
 
-def _extract_ball_from_mask(mask: np.ndarray, config: BallDetectorConfig) -> Optional[Dict[str, object]]:
+def _extract_ball_from_mask(
+    mask: np.ndarray, config: BallDetectorConfig
+) -> Optional[dict[str, object]]:
     """Extract largest valid blob from a binary mask."""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -40,7 +43,9 @@ def _extract_ball_from_mask(mask: np.ndarray, config: BallDetectorConfig) -> Opt
     }
 
 
-def detect_ball(frame: np.ndarray, config: BallDetectorConfig = BallDetectorConfig()) -> Optional[Dict[str, object]]:
+def detect_ball(
+    frame: np.ndarray, config: BallDetectorConfig = BallDetectorConfig()
+) -> Optional[dict[str, object]]:
     """Detect the largest ball-like blob in HSV range."""
     blurred = cv2.GaussianBlur(frame, config.blur_kernel, 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
@@ -56,54 +61,18 @@ def detect_ball(frame: np.ndarray, config: BallDetectorConfig = BallDetectorConf
     return _extract_ball_from_mask(mask, config)
 
 
-def detect_ball_gpu(
-    frame: np.ndarray,
-    config: BallDetectorConfig = BallDetectorConfig(),
-) -> Optional[Dict[str, object]]:
-    """Try CUDA acceleration for ball detection, fallback to CPU if unavailable."""
-    try:
-        if not hasattr(cv2, "cuda"):
-            return detect_ball(frame, config)
-        if cv2.cuda.getCudaEnabledDeviceCount() <= 0:
-            return detect_ball(frame, config)
-
-        gpu_frame = cv2.cuda_GpuMat()
-        gpu_frame.upload(frame)
-
-        gaussian = cv2.cuda.createGaussianFilter(
-            cv2.CV_8UC3,
-            cv2.CV_8UC3,
-            config.blur_kernel,
-            0,
-        )
-        gpu_blurred = gaussian.apply(gpu_frame)
-        gpu_hsv = cv2.cuda.cvtColor(gpu_blurred, cv2.COLOR_BGR2HSV)
-
-        lower = np.array(config.hsv_lower, dtype=np.uint8)
-        upper = np.array(config.hsv_upper, dtype=np.uint8)
-        gpu_mask = cv2.cuda.inRange(gpu_hsv, lower, upper)
-        mask = gpu_mask.download()
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, config.morph_kernel_size)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=config.morph_iterations)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=config.morph_iterations)
-        return _extract_ball_from_mask(mask, config)
-    except Exception:
-        return detect_ball(frame, config)
-
-
 def draw_ball(
     frame: np.ndarray,
-    det: Optional[Dict[str, object]],
-    color: Tuple[int, int, int] = (0, 255, 0),
+    det: Optional[dict[str, object]],
+    color: tuple[int, int, int] = (0, 255, 0),
     label: str = "BALL",
 ) -> None:
     """Draw ball center and radius on frame."""
     if not det:
         return
 
-    center = det["center"]
-    radius = max(2, int(det["radius"]))
+    center: tuple[int, int] = det["center"]  # type: ignore
+    radius = max(2, int(det["radius"]))  # type: ignore
     cv2.circle(frame, center, radius, color, 2)
     cv2.circle(frame, center, 3, color, -1)
     cv2.putText(

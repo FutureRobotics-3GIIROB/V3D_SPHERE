@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import time
 from collections import deque
-from typing import Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Union, cast
 
 import cv2
 import numpy as np
@@ -19,13 +18,13 @@ F9_KEYS = {120, 0x78, 0x780000}
 class HomographyCalibrator:
     """Generate and validate chessboard homography calibration."""
 
-    CHESSBOARD_SIZE: Tuple[int, int] = (6, 9)
+    CHESSBOARD_SIZE: tuple[int, int] = (6, 9)
     SQUARE_SIZE_MM: float = 30.0
     REQUIRED_CAPTURES: int = 3
     CALIBRATION_FILE: Path = Path(__file__).resolve().parent / "positions.json"
 
     @classmethod
-    def load_positions_file(cls) -> Optional[Dict[str, object]]:
+    def load_positions_file(cls) -> Optional[dict[str, Any]]:
         """Load calibration file if available and valid."""
         if not cls.CALIBRATION_FILE.exists():
             return None
@@ -49,7 +48,7 @@ class HomographyCalibrator:
     @classmethod
     def ensure_positions_file(
         cls, camera_source: CameraSource, ask_user: bool = True
-    ) -> Optional[Dict[str, object]]:
+    ) -> Optional[dict[str, Any]]:
         """Ensure positions.json exists and return loaded calibration data."""
         existing = cls.load_positions_file()
         if existing is not None:
@@ -73,48 +72,15 @@ class HomographyCalibrator:
         return points
 
     @staticmethod
-    def _select_compute_backend() -> Tuple[bool, bool, int, int]:
-        """Select CUDA when available, otherwise configure CPU multithreading."""
-        cuda_devices = 0
-        use_gpu = False
-
+    def _configure_cpu_backend() -> int:
+        """Configure CPU multithreading and return the thread count in use."""
+        cpu_count = cv2.getNumberOfCPUs()
+        cpu_threads = max(1, cpu_count - 1)
         try:
-            if hasattr(cv2, "cuda"):
-                cuda_devices = int(cv2.cuda.getCudaEnabledDeviceCount())
+            cv2.setNumThreads(cpu_threads)
         except Exception:
-            cuda_devices = 0
-
-        if cuda_devices > 0:
-            try:
-                cv2.cuda.setDevice(0)
-                use_gpu = True
-            except Exception:
-                use_gpu = False
-
-        use_multithread = not use_gpu
-        cpu_threads = 1
-        if use_multithread:
-            cpu_threads = max(1, (os.cpu_count() or 2) - 1)
-            try:
-                cv2.setNumThreads(cpu_threads)
-            except Exception:
-                cpu_threads = 1
-
-        return use_gpu, use_multithread, cuda_devices, cpu_threads
-
-    @staticmethod
-    def _to_gray(frame: np.ndarray, use_gpu: bool) -> np.ndarray:
-        """Convert frame to grayscale, optionally using CUDA acceleration."""
-        if not use_gpu:
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        try:
-            gpu_frame = cv2.cuda_GpuMat()
-            gpu_frame.upload(frame)
-            gpu_gray = cv2.cuda.cvtColor(gpu_frame, cv2.COLOR_BGR2GRAY)
-            return gpu_gray.download()
-        except Exception:
-            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            cpu_threads = 1
+        return cpu_threads
 
     @staticmethod
     def _draw_fps(display: np.ndarray, fps: float) -> None:
@@ -132,17 +98,13 @@ class HomographyCalibrator:
     @staticmethod
     def _draw_debug(
         display: np.ndarray,
-        use_gpu: bool,
-        use_multithread: bool,
-        cuda_devices: int,
         cpu_threads: int,
     ) -> None:
         """Draw debug backend details on calibration frame."""
         lines = [
             "DEBUG MODE: ON",
-            f"Backend: {'CUDA GPU' if use_gpu else 'CPU'}",
-            f"CUDA devices: {cuda_devices}",
-            f"CPU multithread: {use_multithread}",
+            "Backend: CPU",
+            "CPU multithread: True",
             f"CPU threads: {cpu_threads}",
         ]
 
@@ -160,15 +122,15 @@ class HomographyCalibrator:
             y += 24
 
     @classmethod
-    def generate_positions_file(cls, camera_source: CameraSource) -> Optional[Dict[str, object]]:
+    def generate_positions_file(cls, camera_source: CameraSource, cam_reader: Optional[Any] = None) -> Optional[dict[str, Any]]:
         """Interactive chessboard capture and homography generation."""
         cam_reader = create_latest_frame_camera(camera_source)
-        use_gpu, use_multithread, cuda_devices, cpu_threads = cls._select_compute_backend()
+        cpu_threads = cls._configure_cpu_backend()
         debug_mode = False
         frame_times = deque(maxlen=60)
 
-        object_points = []
-        image_points = []
+        object_points: list[np.ndarray] = []
+        image_points: list[np.ndarray] = []
         objp = cls._build_object_points()
 
         criteria = (
@@ -181,10 +143,7 @@ class HomographyCalibrator:
         print(f"Chessboard size: {cls.CHESSBOARD_SIZE[0]}x{cls.CHESSBOARD_SIZE[1]}")
         print(f"Required captures: {cls.REQUIRED_CAPTURES}")
         print("Controls: SPACE = capture, ESC/q = cancel, F9 = toggle debug")
-        if use_gpu:
-            print("Compute backend: CUDA GPU")
-        else:
-            print(f"Compute backend: CPU multithread ({cpu_threads} threads)")
+        print(f"Compute backend: CPU multithread ({cpu_threads} threads)")
 
         last_gray_shape = None
 
@@ -195,7 +154,7 @@ class HomographyCalibrator:
                 if frame is None:
                     continue
 
-                gray = cls._to_gray(frame, use_gpu=use_gpu)
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 last_gray_shape = gray.shape[::-1]
 
                 found, corners = cv2.findChessboardCorners(gray, cls.CHESSBOARD_SIZE)
@@ -232,9 +191,6 @@ class HomographyCalibrator:
                 if debug_mode:
                     cls._draw_debug(
                         display,
-                        use_gpu=use_gpu,
-                        use_multithread=use_multithread,
-                        cuda_devices=cuda_devices,
                         cpu_threads=cpu_threads,
                     )
 
@@ -248,8 +204,7 @@ class HomographyCalibrator:
                     if debug_mode:
                         print(
                             "Calibration backend info -> "
-                            f"CUDA={use_gpu}, CUDA devices={cuda_devices}, "
-                            f"CPU multithread={use_multithread}, CPU threads={cpu_threads}"
+                            f"CPU multithread=True, CPU threads={cpu_threads}"
                         )
                     continue
 
@@ -267,7 +222,8 @@ class HomographyCalibrator:
             if not image_points or last_gray_shape is None:
                 return None
 
-            reproj_err, camera_matrix, dist_coeffs, _, _ = cv2.calibrateCamera(
+            calibrate_camera = cast(Any, cv2.calibrateCamera)
+            reproj_err, camera_matrix, dist_coeffs, _, _ = calibrate_camera(
                 object_points,
                 image_points,
                 last_gray_shape,
@@ -305,7 +261,7 @@ class HomographyCalibrator:
     @staticmethod
     def transform_point(
         point_px: Sequence[float], homography_matrix: Union[np.ndarray, Sequence[Sequence[float]]]
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         """Transform one image point into calibrated plane coordinates in millimeters."""
         h = np.asarray(homography_matrix, dtype=np.float64)
         pt = np.array([[[float(point_px[0]), float(point_px[1])]]], dtype=np.float64)
