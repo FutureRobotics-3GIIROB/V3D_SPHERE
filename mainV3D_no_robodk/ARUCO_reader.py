@@ -42,10 +42,12 @@ class STLMesh:
     """Simple STL mesh container with OpenCV projection render."""
 
     def __init__(self, triangles: np.ndarray):
+        """Store mesh triangles as float32 for OpenCV projection operations."""
         self.triangles = triangles.astype(np.float32)
 
     @classmethod
     def from_file(cls, stl_path: str) -> STLMesh:
+        """Load and recenter STL mesh triangles from disk."""
         path = Path(stl_path)
         if not path.exists():
             raise FileNotFoundError(f"STL file not found: {stl_path}")
@@ -63,6 +65,7 @@ class ArucoObject:
     """Configurable model renderer associated to one marker id."""
 
     def __init__(self):
+        """Initialize render settings and default model offsets."""
         self.stl_mesh: STLMesh | None = None
         self.scale: float = 1.0
         self.offset_tvec = np.zeros((3,), dtype=np.float32)
@@ -145,6 +148,7 @@ class ArucoReader:
         enable_fallback_dictionary: bool = True,
         expected_ids: Iterable[int] | None = None,
     ):
+        """Create ArUco detector and runtime state for marker tracking/rendering."""
         self.marker_size_m = marker_size_m
         self.dictionary_name = dictionary_name
         self.enable_fallback_dictionary = enable_fallback_dictionary
@@ -281,24 +285,7 @@ class ArucoReader:
 
             pts = marker_corners.reshape(4, 2).astype(np.float32)
             area = float(cv2.contourArea(pts))
-            if area < 350.0:
-                continue
-
-            x, y, w, h = cv2.boundingRect(pts.astype(np.int32))
-            if x <= 4 or y <= 4 or (x + w) >= (frame_w - 4) or (y + h) >= (frame_h - 4):
-                continue
-
-            edges = [
-                float(np.linalg.norm(pts[1] - pts[0])),
-                float(np.linalg.norm(pts[2] - pts[1])),
-                float(np.linalg.norm(pts[3] - pts[2])),
-                float(np.linalg.norm(pts[0] - pts[3])),
-            ]
-            min_edge = min(edges)
-            max_edge = max(edges)
-            if min_edge < 14.0:
-                continue
-            if max_edge / max(min_edge, 1e-6) > 2.2:
+            if not self._is_marker_candidate_valid(pts, area, frame_w, frame_h):
                 continue
 
             # Keep strongest area when duplicate IDs appear in same frame.
@@ -313,6 +300,35 @@ class ArucoReader:
         filtered_corners = [kept[mid][1] for mid in ordered_ids]
         filtered_ids = np.asarray(ordered_ids, dtype=np.int32).reshape(-1, 1)
         return filtered_corners, filtered_ids
+
+    @staticmethod
+    def _is_marker_candidate_valid(
+        pts: np.ndarray,
+        area: float,
+        frame_w: int,
+        frame_h: int,
+    ) -> bool:
+        """Return True if marker candidate satisfies geometry and border constraints."""
+        if area < 350.0:
+            return False
+
+        x, y, w, h = cv2.boundingRect(pts.astype(np.int32))
+        if x <= 4 or y <= 4 or (x + w) >= (frame_w - 4) or (y + h) >= (frame_h - 4):
+            return False
+
+        edges = [
+            float(np.linalg.norm(pts[1] - pts[0])),
+            float(np.linalg.norm(pts[2] - pts[1])),
+            float(np.linalg.norm(pts[3] - pts[2])),
+            float(np.linalg.norm(pts[0] - pts[3])),
+        ]
+        min_edge = min(edges)
+        max_edge = max(edges)
+        if min_edge < 14.0:
+            return False
+        if max_edge / max(min_edge, 1e-6) > 2.2:
+            return False
+        return True
 
     def ensure_object(self, marker_id: int) -> ArucoObject:
         """Get or create editable object configuration for a marker id."""
@@ -344,20 +360,7 @@ class ArucoReader:
             self.set_camera_params(frame.shape[:2])
         camera_matrix = np.asarray(self.camera_matrix, dtype=np.float32)
 
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners_raw, ids_raw, _ = self.detector.detectMarkers(gray)
-        corners: list[np.ndarray] = [np.asarray(c, dtype=np.float32) for c in corners_raw]
-        ids: np.ndarray | None = (
-            np.asarray(ids_raw, dtype=np.int32) if ids_raw is not None else None
-        )
-
-        # Optional fallback for compatibility when marker set is mixed.
-        if (ids is None or len(ids) == 0) and self.enable_fallback_dictionary:
-            corners_raw, ids_raw, _ = self.fallback_detector.detectMarkers(gray)
-            corners = [np.asarray(c, dtype=np.float32) for c in corners_raw]
-            ids = np.asarray(ids_raw, dtype=np.int32) if ids_raw is not None else None
-
-        corners, ids = self._filter_candidates(corners, ids, frame.shape[:2])
+        corners, ids = self._detect_and_filter_markers(frame)
 
         result = ArucoFrameResult(frame=output, detections=[])
 
@@ -367,7 +370,47 @@ class ArucoReader:
         if draw:
             aruco.drawDetectedMarkers(output, corners, ids)
 
-        obj_points = np.array(
+        obj_points = self._marker_object_points()
+
+        for marker_corners, marker_id in zip(corners, ids.flatten()):
+            det = self._build_detection(marker_corners, int(marker_id))
+
+            ok, rvec, tvec = self._solve_marker_pose(det.corners, obj_points, camera_matrix)
+            if ok:
+                det.rvec, det.tvec = rvec, tvec
+                self._draw_marker_model_and_label(
+                    frame=output,
+                    marker_id=int(marker_id),
+                    detection=det,
+                    camera_matrix=camera_matrix,
+                    rvec=rvec,
+                    tvec=tvec,
+                    draw=draw,
+                )
+
+            result.detections.append(det)
+
+        return result
+
+    def _detect_and_filter_markers(
+        self, frame: np.ndarray
+    ) -> tuple[list[np.ndarray], np.ndarray | None]:
+        """Detect markers (primary/fallback dictionary) and apply candidate filtering."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        corners_raw, ids_raw, _ = self.detector.detectMarkers(gray)
+        corners = [np.asarray(c, dtype=np.float32) for c in corners_raw]
+        ids = np.asarray(ids_raw, dtype=np.int32) if ids_raw is not None else None
+
+        if (ids is None or len(ids) == 0) and self.enable_fallback_dictionary:
+            corners_raw, ids_raw, _ = self.fallback_detector.detectMarkers(gray)
+            corners = [np.asarray(c, dtype=np.float32) for c in corners_raw]
+            ids = np.asarray(ids_raw, dtype=np.int32) if ids_raw is not None else None
+
+        return self._filter_candidates(corners, ids, frame.shape[:2])
+
+    def _marker_object_points(self) -> np.ndarray:
+        """Return canonical 3D marker corner points in marker local coordinates."""
+        return np.array(
             [
                 [-self.marker_size_m / 2, -self.marker_size_m / 2, 0],
                 [self.marker_size_m / 2, -self.marker_size_m / 2, 0],
@@ -377,58 +420,70 @@ class ArucoReader:
             dtype=np.float32,
         )
 
-        for marker_corners, marker_id in zip(corners, ids.flatten()):
-            corner_2d = marker_corners.reshape(4, 2)
-            center = corner_2d.mean(axis=0).astype(int)
+    def _build_detection(self, marker_corners: np.ndarray, marker_id: int) -> ArucoDetection:
+        """Create detection object and cache marker corners for occlusion tolerance."""
+        corner_2d = marker_corners.reshape(4, 2)
+        center = corner_2d.mean(axis=0).astype(int)
+        self._last_seen_corners[marker_id] = corner_2d.copy()
+        return ArucoDetection(
+            id=marker_id,
+            center_px=(int(center[0]), int(center[1])),
+            corners=corner_2d,
+        )
 
-            # Cache this marker's last known corners.
-            self._last_seen_corners[int(marker_id)] = corner_2d.copy()
+    def _solve_marker_pose(
+        self,
+        corner_2d: np.ndarray,
+        obj_points: np.ndarray,
+        camera_matrix: np.ndarray,
+    ) -> tuple[bool, np.ndarray, np.ndarray]:
+        """Solve marker pose using PnP from 2D corners and canonical 3D marker points."""
+        ok, rvec, tvec = cv2.solvePnP(
+            obj_points,
+            corner_2d.astype(np.float32),
+            camera_matrix,
+            self.dist_coeffs,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        return bool(ok), np.asarray(rvec, dtype=np.float32), np.asarray(tvec, dtype=np.float32)
 
-            det = ArucoDetection(
-                id=int(marker_id),
-                center_px=(int(center[0]), int(center[1])),
-                corners=corner_2d,
-            )
+    def _draw_marker_model_and_label(
+        self,
+        frame: np.ndarray,
+        marker_id: int,
+        detection: ArucoDetection,
+        camera_matrix: np.ndarray,
+        rvec: np.ndarray,
+        tvec: np.ndarray,
+        draw: bool,
+    ) -> None:
+        """Draw marker-attached 3D model and marker label when rendering is enabled."""
+        if not draw:
+            return
 
-            ok, rvec, tvec = cv2.solvePnP(
-                obj_points,
-                corner_2d.astype(np.float32),
+        if marker_id in self.objects:
+            tilt_deg = self._get_pin_state(marker_id).current_tilt_deg
+            fallen = tilt_deg >= self.pin_fall_target_deg - 1.0
+            dynamic_rvec = np.array([np.deg2rad(tilt_deg), 0.0, 0.0], dtype=np.float32)
+            self.objects[marker_id].draw(
+                frame,
                 camera_matrix,
                 self.dist_coeffs,
-                flags=cv2.SOLVEPNP_ITERATIVE,
+                rvec,
+                tvec,
+                extra_rvec=dynamic_rvec,
+                fallen=fallen,
             )
-            if ok:
-                det.rvec = rvec
-                det.tvec = tvec
 
-                if draw and int(marker_id) in self.objects:
-                    tilt_deg = self._get_pin_state(int(marker_id)).current_tilt_deg
-                    fallen = tilt_deg >= self.pin_fall_target_deg - 1.0
-                    dynamic_rvec = np.array([np.deg2rad(tilt_deg), 0.0, 0.0], dtype=np.float32)
-                    self.objects[int(marker_id)].draw(
-                        output,
-                        camera_matrix,
-                        self.dist_coeffs,
-                        rvec,
-                        tvec,
-                        extra_rvec=dynamic_rvec,
-                        fallen=fallen,
-                    )
-
-                if draw:
-                    cv2.putText(
-                        output,
-                        f"ID:{int(marker_id)}",
-                        (det.center_px[0] - 20, det.center_px[1] - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        (0, 255, 255),
-                        2,
-                    )
-
-            result.detections.append(det)
-
-        return result
+        cv2.putText(
+            frame,
+            f"ID:{marker_id}",
+            (detection.center_px[0] - 20, detection.center_px[1] - 12),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 255),
+            2,
+        )
 
     def draw_virtual_pins(
         self,
@@ -444,36 +499,41 @@ class ArucoReader:
 
             state = self._get_pin_state(int(det.id))
             fallen = state.current_tilt_deg >= self.pin_fall_target_deg - 1.0
-            pin_color = (0, 0, 255) if fallen else (255, 120, 0)
-            outline_color = (0, 0, 200) if fallen else (0, 220, 255)
-            label_color = (0, 0, 255) if fallen else (255, 220, 0)
-
-            corners = det.corners.astype(np.int32)
-            center = (int(det.center_px[0]), int(det.center_px[1]))
-
-            # Marker outline as the pin base reference.
-            cv2.polylines(frame, [corners], True, outline_color, 2, cv2.LINE_AA)
-
-            # Lightweight pin icon.
-            pin_top = (center[0], center[1] - 26)
-            pin_bottom_left = (center[0] - 8, center[1] + 8)
-            pin_bottom_right = (center[0] + 8, center[1] + 8)
-            triangle = np.array([pin_top, pin_bottom_left, pin_bottom_right], dtype=np.int32)
-            cv2.fillConvexPoly(frame, triangle, pin_color)
-            cv2.circle(frame, (center[0], center[1] + 10), 10, pin_color, 2)
-
-            cv2.putText(
-                frame,
-                f"BOLO {det.id}",
-                (center[0] - 34, center[1] - 36),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                label_color,
-                2,
-            )
+            self._draw_virtual_pin_icon(frame, det, fallen)
             count += 1
 
         return count
+
+    @staticmethod
+    def _draw_virtual_pin_icon(frame: np.ndarray, detection: ArucoDetection, fallen: bool) -> None:
+        """Draw one lightweight virtual pin icon aligned to the marker center/corners."""
+        pin_color = (0, 0, 255) if fallen else (255, 120, 0)
+        outline_color = (0, 0, 200) if fallen else (0, 220, 255)
+        label_color = (0, 0, 255) if fallen else (255, 220, 0)
+
+        corners = detection.corners.astype(np.int32)
+        center = (int(detection.center_px[0]), int(detection.center_px[1]))
+
+        # Marker outline as the pin base reference.
+        cv2.polylines(frame, [corners], True, outline_color, 2, cv2.LINE_AA)
+
+        # Lightweight pin icon.
+        pin_top = (center[0], center[1] - 26)
+        pin_bottom_left = (center[0] - 8, center[1] + 8)
+        pin_bottom_right = (center[0] + 8, center[1] + 8)
+        triangle = np.array([pin_top, pin_bottom_left, pin_bottom_right], dtype=np.int32)
+        cv2.fillConvexPoly(frame, triangle, pin_color)
+        cv2.circle(frame, (center[0], center[1] + 10), 10, pin_color, 2)
+
+        cv2.putText(
+            frame,
+            f"BOLO {detection.id}",
+            (center[0] - 34, center[1] - 36),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            label_color,
+            2,
+        )
 
 
 def _parse_stl(raw_bytes: bytes) -> np.ndarray:

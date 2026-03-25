@@ -14,7 +14,14 @@
 
 ## Calidad de codigo
 
-Este repositorio esta configurado para trabajar con un flujo estandar de calidad:
+Este repositorio esta configurado para trabajar con un flujo estandar de calidad.
+
+Alcance actual:
+
+- mainV3D_no_robodk: codigo activo, con checks automaticos
+- Programas RoboDK: carpeta legacy de referencia (fuera del alcance de checks)
+
+Herramientas:
 
 - Ruff: lint y orden de imports
 - Black: formateo automatico

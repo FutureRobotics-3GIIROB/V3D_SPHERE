@@ -27,6 +27,7 @@ exclude = '''
     \.git
   | \.venv
   | __pycache__
+    | Programas RoboDK
 )/
 '''
 
@@ -37,6 +38,7 @@ exclude = [
     ".git",
     ".venv",
     "__pycache__",
+    "Programas RoboDK",
 ]
 
 [tool.ruff.lint]

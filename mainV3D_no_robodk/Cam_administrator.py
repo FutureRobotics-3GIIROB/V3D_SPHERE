@@ -75,10 +75,8 @@ def _set_opencv_quiet_mode() -> None:
         set_log_level = getattr(cv2, "setLogLevel", None)
         if not callable(set_log_level):
             return
-        if hasattr(cv2, "LOG_LEVEL_SILENT"):
-            set_log_level(cv2.LOG_LEVEL_SILENT)
-        else:
-            set_log_level(0)
+        silent_level = getattr(cv2, "LOG_LEVEL_SILENT", 0)
+        set_log_level(silent_level)
     except Exception:
         pass
 
@@ -90,6 +88,7 @@ class LatestFrameCamera:
     """Background camera reader that always keeps only the most recent frame."""
 
     def __init__(self, cap: cv2.VideoCapture):
+        """Build reader with an opened OpenCV capture handle."""
         self._cap = cap
         self._running = False
         self._thread: threading.Thread | None = None

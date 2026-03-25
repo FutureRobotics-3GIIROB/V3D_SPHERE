@@ -123,14 +123,178 @@ class HomographyCalibrator:
             y += 24
 
     @classmethod
+    def _print_calibration_intro(cls, cpu_threads: int) -> None:
+        """Print calibration instructions and runtime configuration."""
+        print("\n=== Homography Calibration ===")
+        print(f"Chessboard size: {cls.CHESSBOARD_SIZE[0]}x{cls.CHESSBOARD_SIZE[1]}")
+        print(f"Required captures: {cls.REQUIRED_CAPTURES}")
+        print("Controls: SPACE = capture, ESC/q = cancel, F9 = toggle debug")
+        print(f"Compute backend: CPU multithread ({cpu_threads} threads)")
+
+    @classmethod
+    def _capture_chessboard_samples(
+        cls,
+        cam_reader: Any,
+        cpu_threads: int,
+        object_points: list[np.ndarray],
+        image_points: list[np.ndarray],
+        objp: np.ndarray,
+        criteria: tuple[int, int, float],
+    ) -> tuple[int, int] | None:
+        """Collect required chessboard captures from camera stream."""
+        debug_mode = False
+        frame_times: deque[float] = deque(maxlen=60)
+        last_gray_shape: tuple[int, int] | None = None
+
+        while len(image_points) < cls.REQUIRED_CAPTURES:
+            loop_start = time.perf_counter()
+            frame = cam_reader.read_latest()
+            if frame is None:
+                continue
+
+            gray, found, refined, display = cls._build_capture_frame(frame, criteria)
+            last_gray_shape = gray.shape[::-1]
+
+            cls._draw_capture_overlay(
+                display=display,
+                found=found,
+                image_points_count=len(image_points),
+                frame_times=frame_times,
+                elapsed_s=time.perf_counter() - loop_start,
+                debug_mode=debug_mode,
+                cpu_threads=cpu_threads,
+            )
+
+            cv2.imshow("Homography Calibration", display)
+            key = cv2.waitKeyEx(1)
+
+            if key in F9_KEYS:
+                debug_mode = cls._toggle_capture_debug(debug_mode, cpu_threads)
+                continue
+
+            if key in (27, ord("q"), ord("Q")):
+                print("Calibration cancelled.")
+                return None
+
+            if key == 32 and found and refined is not None:
+                object_points.append(objp.copy())
+                image_points.append(refined)
+                print(f"Capture saved: {len(image_points)}/{cls.REQUIRED_CAPTURES}")
+
+        return last_gray_shape
+
+    @classmethod
+    def _build_capture_frame(
+        cls,
+        frame: np.ndarray,
+        criteria: tuple[int, int, float],
+    ) -> tuple[np.ndarray, bool, np.ndarray | None, np.ndarray]:
+        """Run chessboard detection and return frame artifacts for calibration UI."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        found, corners = cv2.findChessboardCorners(gray, cls.CHESSBOARD_SIZE)
+        display = frame.copy()
+
+        if not found:
+            return gray, False, None, display
+
+        refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
+        cv2.drawChessboardCorners(display, cls.CHESSBOARD_SIZE, refined, found)
+        return gray, True, refined, display
+
+    @classmethod
+    def _draw_capture_overlay(
+        cls,
+        display: np.ndarray,
+        found: bool,
+        image_points_count: int,
+        frame_times: deque[float],
+        elapsed_s: float,
+        debug_mode: bool,
+        cpu_threads: int,
+    ) -> None:
+        """Draw calibration progress text, FPS, and optional debug details."""
+        if found:
+            message = (
+                f"Chessboard detected {image_points_count}/{cls.REQUIRED_CAPTURES} - press SPACE"
+            )
+            color = (0, 200, 0)
+        else:
+            message = f"Find chessboard {image_points_count}/{cls.REQUIRED_CAPTURES}"
+            color = (0, 0, 255)
+
+        cv2.putText(
+            display,
+            message,
+            (12, 32),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            color,
+            2,
+        )
+
+        frame_times.append(elapsed_s)
+        avg = sum(frame_times) / len(frame_times) if frame_times else 0.0
+        fps = (1.0 / avg) if avg > 0 else 0.0
+        cls._draw_fps(display, fps)
+
+        if debug_mode:
+            cls._draw_debug(display, cpu_threads=cpu_threads)
+
+    @staticmethod
+    def _toggle_capture_debug(debug_mode: bool, cpu_threads: int) -> bool:
+        """Toggle calibration debug mode and print backend details when enabled."""
+        new_state = not debug_mode
+        status = "ON" if new_state else "OFF"
+        print(f"Calibration debug mode: {status}")
+        if new_state:
+            print("Calibration backend info -> " f"CPU multithread=True, CPU threads={cpu_threads}")
+        return new_state
+
+    @classmethod
+    def _build_calibration_data(
+        cls,
+        object_points: list[np.ndarray],
+        image_points: list[np.ndarray],
+        objp: np.ndarray,
+        last_gray_shape: tuple[int, int],
+    ) -> dict[str, Any] | None:
+        """Compute camera calibration and homography payload."""
+        calibrate_camera = cast(Any, cv2.calibrateCamera)
+        reproj_err, camera_matrix, dist_coeffs, _, _ = calibrate_camera(
+            object_points,
+            image_points,
+            last_gray_shape,
+            None,
+            None,
+        )
+
+        world_xy = objp[:, :2]
+        img_all = np.vstack([pts.reshape(-1, 2) for pts in image_points]).astype(np.float32)
+        world_all = np.vstack([world_xy for _ in image_points]).astype(np.float32)
+
+        homography_matrix, mask = cv2.findHomography(img_all, world_all, method=cv2.RANSAC)
+        if homography_matrix is None:
+            print("Unable to compute homography matrix.")
+            return None
+
+        return {
+            "camera_matrix": camera_matrix.tolist(),
+            "distortion_coefficients": dist_coeffs.reshape(-1).tolist(),
+            "homography_matrix": homography_matrix.tolist(),
+            "chessboard_size": list(cls.CHESSBOARD_SIZE),
+            "square_size_mm": cls.SQUARE_SIZE_MM,
+            "required_captures": cls.REQUIRED_CAPTURES,
+            "reprojection_error": float(reproj_err),
+            "inliers": int(mask.sum()) if mask is not None else len(img_all),
+        }
+
+    @classmethod
     def generate_positions_file(
         cls, camera_source: CameraSource, cam_reader: Any | None = None
     ) -> dict[str, Any] | None:
         """Interactive chessboard capture and homography generation."""
-        cam_reader = create_latest_frame_camera(camera_source)
+        reader = cam_reader if cam_reader is not None else create_latest_frame_camera(camera_source)
         cpu_threads = cls._configure_cpu_backend()
-        debug_mode = False
-        frame_times: deque[float] = deque(maxlen=60)
 
         object_points: list[np.ndarray] = []
         image_points: list[np.ndarray] = []
@@ -142,119 +306,37 @@ class HomographyCalibrator:
             0.001,
         )
 
-        print("\n=== Homography Calibration ===")
-        print(f"Chessboard size: {cls.CHESSBOARD_SIZE[0]}x{cls.CHESSBOARD_SIZE[1]}")
-        print(f"Required captures: {cls.REQUIRED_CAPTURES}")
-        print("Controls: SPACE = capture, ESC/q = cancel, F9 = toggle debug")
-        print(f"Compute backend: CPU multithread ({cpu_threads} threads)")
-
-        last_gray_shape = None
+        cls._print_calibration_intro(cpu_threads)
 
         try:
-            while len(image_points) < cls.REQUIRED_CAPTURES:
-                loop_start = time.perf_counter()
-                frame = cam_reader.read_latest()
-                if frame is None:
-                    continue
-
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                last_gray_shape = gray.shape[::-1]
-
-                found, corners = cv2.findChessboardCorners(gray, cls.CHESSBOARD_SIZE)
-                display = frame.copy()
-
-                if found:
-                    refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
-                    cv2.drawChessboardCorners(display, cls.CHESSBOARD_SIZE, refined, found)
-                    message = f"Chessboard detected {len(image_points)}/{cls.REQUIRED_CAPTURES} - press SPACE"
-                    color = (0, 200, 0)
-                else:
-                    refined = None
-                    message = f"Find chessboard {len(image_points)}/{cls.REQUIRED_CAPTURES}"
-                    color = (0, 0, 255)
-
-                cv2.putText(
-                    display,
-                    message,
-                    (12, 32),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    color,
-                    2,
-                )
-
-                elapsed = time.perf_counter() - loop_start
-                frame_times.append(elapsed)
-                avg = sum(frame_times) / len(frame_times) if frame_times else 0.0
-                fps = (1.0 / avg) if avg > 0 else 0.0
-                cls._draw_fps(display, fps)
-
-                if debug_mode:
-                    cls._draw_debug(
-                        display,
-                        cpu_threads=cpu_threads,
-                    )
-
-                cv2.imshow("Homography Calibration", display)
-                key = cv2.waitKeyEx(1)
-
-                if key in F9_KEYS:
-                    debug_mode = not debug_mode
-                    status = "ON" if debug_mode else "OFF"
-                    print(f"Calibration debug mode: {status}")
-                    if debug_mode:
-                        print(
-                            "Calibration backend info -> "
-                            f"CPU multithread=True, CPU threads={cpu_threads}"
-                        )
-                    continue
-
-                if key in (27, ord("q"), ord("Q")):
-                    print("Calibration cancelled.")
-                    return None
-
-                if key == 32 and found and refined is not None:
-                    object_points.append(objp.copy())
-                    image_points.append(refined)
-                    print(f"Capture saved: {len(image_points)}/{cls.REQUIRED_CAPTURES}")
+            last_gray_shape = cls._capture_chessboard_samples(
+                cam_reader=reader,
+                cpu_threads=cpu_threads,
+                object_points=object_points,
+                image_points=image_points,
+                objp=objp,
+                criteria=criteria,
+            )
+            if last_gray_shape is None:
+                return None
 
             if not image_points or last_gray_shape is None:
                 return None
 
-            calibrate_camera = cast(Any, cv2.calibrateCamera)
-            reproj_err, camera_matrix, dist_coeffs, _, _ = calibrate_camera(
+            data = cls._build_calibration_data(
                 object_points,
                 image_points,
+                objp,
                 last_gray_shape,
-                None,
-                None,
             )
-
-            world_xy = objp[:, :2]
-            img_all = np.vstack([pts.reshape(-1, 2) for pts in image_points]).astype(np.float32)
-            world_all = np.vstack([world_xy for _ in image_points]).astype(np.float32)
-
-            homography_matrix, mask = cv2.findHomography(img_all, world_all, method=cv2.RANSAC)
-            if homography_matrix is None:
-                print("Unable to compute homography matrix.")
+            if data is None:
                 return None
-
-            data = {
-                "camera_matrix": camera_matrix.tolist(),
-                "distortion_coefficients": dist_coeffs.reshape(-1).tolist(),
-                "homography_matrix": homography_matrix.tolist(),
-                "chessboard_size": list(cls.CHESSBOARD_SIZE),
-                "square_size_mm": cls.SQUARE_SIZE_MM,
-                "required_captures": cls.REQUIRED_CAPTURES,
-                "reprojection_error": float(reproj_err),
-                "inliers": int(mask.sum()) if mask is not None else len(img_all),
-            }
 
             cls.CALIBRATION_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
             print(f"Calibration saved to {cls.CALIBRATION_FILE}")
             return cls.load_positions_file()
         finally:
-            cam_reader.release()
+            reader.release()
             cv2.destroyWindow("Homography Calibration")
 
     @staticmethod
