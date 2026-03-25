@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 import threading
 import time
 from contextlib import contextmanager
-from typing import List, Optional, Union
+from pathlib import Path
+from typing import Any, Union
 
 # Keep OpenCV native logger quiet before importing cv2.
 # Force quiet mode to suppress backend probing spam on Windows.
@@ -15,7 +15,6 @@ os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
 os.environ.setdefault("OPENCV_VIDEOCAPTURE_DEBUG", "0")
 os.environ.setdefault("OPENCV_FFMPEG_DEBUG", "0")
 import cv2
-
 
 CAMERA_CONFIG_FILE = Path(__file__).resolve().parent / ".camera_source.txt"
 DEFAULT_REMOTE_URL = "http://127.0.0.1:8080/video"
@@ -40,14 +39,14 @@ def _suppress_stderr():
             old_stream = None
         yield
     finally:
-        if 'old_stream' in locals() and old_stream is not None:
+        if "old_stream" in locals() and old_stream is not None:
             sys.stderr = old_stream
         os.dup2(old_stderr_fd, 2)
         os.close(old_stderr_fd)
         devnull.close()
 
 
-def _camera_backends_for_os() -> List[int]:
+def _camera_backends_for_os() -> list[int]:
     """Return preferred backends for local camera indexes."""
     if os.name == "nt":
         candidates = []
@@ -59,7 +58,7 @@ def _camera_backends_for_os() -> List[int]:
     return [cv2.CAP_ANY]
 
 
-def _open_local_camera(index: int) -> Optional[cv2.VideoCapture]:
+def _open_local_camera(index: int) -> cv2.VideoCapture | None:
     """Open local camera index with controlled backend fallback."""
     for backend in _camera_backends_for_os():
         with _suppress_stderr():
@@ -73,10 +72,13 @@ def _open_local_camera(index: int) -> Optional[cv2.VideoCapture]:
 def _set_opencv_quiet_mode() -> None:
     """Reduce noisy OpenCV logs in console output."""
     try:
+        set_log_level = getattr(cv2, "setLogLevel", None)
+        if not callable(set_log_level):
+            return
         if hasattr(cv2, "LOG_LEVEL_SILENT"):
-            cv2.setLogLevel(cv2.LOG_LEVEL_SILENT)
+            set_log_level(cv2.LOG_LEVEL_SILENT)
         else:
-            cv2.setLogLevel(0)
+            set_log_level(0)
     except Exception:
         pass
 
@@ -90,9 +92,9 @@ class LatestFrameCamera:
     def __init__(self, cap: cv2.VideoCapture):
         self._cap = cap
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._latest_frame = None
+        self._latest_frame: Any | None = None
 
     def start(self) -> None:
         """Start reader thread."""
@@ -128,9 +130,9 @@ class LatestFrameCamera:
         self._cap.release()
 
 
-def list_local_cameras(max_devices: int = 8) -> List[int]:
+def list_local_cameras(max_devices: int = 8) -> list[int]:
     """Probe local camera indexes and return available devices."""
-    available: List[int] = []
+    available: list[int] = []
     for index in range(max_devices):
         cap = _open_local_camera(index)
         if cap is None:
@@ -142,7 +144,7 @@ def list_local_cameras(max_devices: int = 8) -> List[int]:
     return available
 
 
-def load_last_camera_source() -> Optional[str]:
+def load_last_camera_source() -> str | None:
     """Load the last user camera source from disk."""
     if not CAMERA_CONFIG_FILE.exists():
         return None
@@ -173,7 +175,7 @@ def normalize_camera_source(value: str) -> CameraSource:
 
 def prompt_default_camera() -> CameraSource:
     """Ask user for default camera source via console."""
-    local_cameras: List[int] = []
+    local_cameras: list[int] = []
     if AUTO_PROBE_CAMERAS:
         local_cameras = list_local_cameras()
     last_source = load_last_camera_source() or DEFAULT_REMOTE_URL
@@ -219,8 +221,8 @@ def prompt_default_camera() -> CameraSource:
 
 def create_camera(
     source: CameraSource,
-    width: Optional[int] = 1280,
-    height: Optional[int] = 720,
+    width: int | None = 1280,
+    height: int | None = 720,
     buffer_size: int = 1,
 ) -> cv2.VideoCapture:
     """Create and configure a cv2.VideoCapture object."""
@@ -244,8 +246,8 @@ def create_camera(
 
 def create_latest_frame_camera(
     source: CameraSource,
-    width: Optional[int] = 1280,
-    height: Optional[int] = 720,
+    width: int | None = 1280,
+    height: int | None = 720,
     buffer_size: int = 1,
 ) -> LatestFrameCamera:
     """Create a latest-frame-only camera reader to minimize input lag."""

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import time
 from collections import deque
-from typing import Any, Optional, Sequence, Union, cast
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any, cast
 
 import cv2
 import numpy as np
-
 from Cam_administrator import CameraSource, create_latest_frame_camera
 
-
-F9_KEYS = {120, 0x78, 0x780000}
+F9_KEYS = {120, 0x780000}
 
 
 class HomographyCalibrator:
@@ -24,13 +23,15 @@ class HomographyCalibrator:
     CALIBRATION_FILE: Path = Path(__file__).resolve().parent / "positions.json"
 
     @classmethod
-    def load_positions_file(cls) -> Optional[dict[str, Any]]:
+    def load_positions_file(cls) -> dict[str, Any] | None:
         """Load calibration file if available and valid."""
         if not cls.CALIBRATION_FILE.exists():
             return None
 
         try:
-            data = json.loads(cls.CALIBRATION_FILE.read_text(encoding="utf-8"))
+            data = cast(
+                dict[str, Any], json.loads(cls.CALIBRATION_FILE.read_text(encoding="utf-8"))
+            )
         except (json.JSONDecodeError, OSError):
             return None
 
@@ -48,7 +49,7 @@ class HomographyCalibrator:
     @classmethod
     def ensure_positions_file(
         cls, camera_source: CameraSource, ask_user: bool = True
-    ) -> Optional[dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Ensure positions.json exists and return loaded calibration data."""
         existing = cls.load_positions_file()
         if existing is not None:
@@ -74,7 +75,7 @@ class HomographyCalibrator:
     @staticmethod
     def _configure_cpu_backend() -> int:
         """Configure CPU multithreading and return the thread count in use."""
-        cpu_count = cv2.getNumberOfCPUs()
+        cpu_count = int(cv2.getNumberOfCPUs())
         cpu_threads = max(1, cpu_count - 1)
         try:
             cv2.setNumThreads(cpu_threads)
@@ -122,12 +123,14 @@ class HomographyCalibrator:
             y += 24
 
     @classmethod
-    def generate_positions_file(cls, camera_source: CameraSource, cam_reader: Optional[Any] = None) -> Optional[dict[str, Any]]:
+    def generate_positions_file(
+        cls, camera_source: CameraSource, cam_reader: Any | None = None
+    ) -> dict[str, Any] | None:
         """Interactive chessboard capture and homography generation."""
         cam_reader = create_latest_frame_camera(camera_source)
         cpu_threads = cls._configure_cpu_backend()
         debug_mode = False
-        frame_times = deque(maxlen=60)
+        frame_times: deque[float] = deque(maxlen=60)
 
         object_points: list[np.ndarray] = []
         image_points: list[np.ndarray] = []
@@ -163,9 +166,7 @@ class HomographyCalibrator:
                 if found:
                     refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
                     cv2.drawChessboardCorners(display, cls.CHESSBOARD_SIZE, refined, found)
-                    message = (
-                        f"Chessboard detected {len(image_points)}/{cls.REQUIRED_CAPTURES} - press SPACE"
-                    )
+                    message = f"Chessboard detected {len(image_points)}/{cls.REQUIRED_CAPTURES} - press SPACE"
                     color = (0, 200, 0)
                 else:
                     refined = None
@@ -215,9 +216,7 @@ class HomographyCalibrator:
                 if key == 32 and found and refined is not None:
                     object_points.append(objp.copy())
                     image_points.append(refined)
-                    print(
-                        f"Capture saved: {len(image_points)}/{cls.REQUIRED_CAPTURES}"
-                    )
+                    print(f"Capture saved: {len(image_points)}/{cls.REQUIRED_CAPTURES}")
 
             if not image_points or last_gray_shape is None:
                 return None
@@ -260,7 +259,7 @@ class HomographyCalibrator:
 
     @staticmethod
     def transform_point(
-        point_px: Sequence[float], homography_matrix: Union[np.ndarray, Sequence[Sequence[float]]]
+        point_px: Sequence[float], homography_matrix: np.ndarray | Sequence[Sequence[float]]
     ) -> tuple[float, float]:
         """Transform one image point into calibrated plane coordinates in millimeters."""
         h = np.asarray(homography_matrix, dtype=np.float64)

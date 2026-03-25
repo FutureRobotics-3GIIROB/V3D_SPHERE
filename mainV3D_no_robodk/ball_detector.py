@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -23,7 +22,7 @@ class BallDetectorConfig:
 
 def _extract_ball_from_mask(
     mask: np.ndarray, config: BallDetectorConfig
-) -> Optional[dict[str, object]]:
+) -> dict[str, object] | None:
     """Extract largest valid blob from a binary mask."""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -45,7 +44,7 @@ def _extract_ball_from_mask(
 
 def detect_ball(
     frame: np.ndarray, config: BallDetectorConfig = BallDetectorConfig()
-) -> Optional[dict[str, object]]:
+) -> dict[str, object] | None:
     """Detect the largest ball-like blob in HSV range."""
     blurred = cv2.GaussianBlur(frame, config.blur_kernel, 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
@@ -63,7 +62,7 @@ def detect_ball(
 
 def draw_ball(
     frame: np.ndarray,
-    det: Optional[dict[str, object]],
+    det: dict[str, object] | None,
     color: tuple[int, int, int] = (0, 255, 0),
     label: str = "BALL",
 ) -> None:

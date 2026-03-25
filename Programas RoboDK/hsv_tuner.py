@@ -13,6 +13,7 @@ Press 'q' or Esc to quit.
 """
 
 import sys
+
 import cv2
 import numpy as np
 
@@ -62,23 +63,23 @@ def overlay_text(frame, lower, upper):
         f"HSV_LOWER = np.array([{lower[0]}, {lower[1]}, {lower[2]}])  "
         f"HSV_UPPER = np.array([{upper[0]}, {upper[1]}, {upper[2]}])"
     )
-    cv2.putText(frame, text, (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+    cv2.putText(frame, text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
 
 
 def main():
     source = sys.argv[1] if len(sys.argv) > 1 else "0"
     try:
-        source = int(source)          # webcam index
+        source = int(source)  # webcam index
     except ValueError:
-        pass                          # image/video path
+        pass  # image/video path
 
     is_image = isinstance(source, str) and not source.endswith((".mp4", ".avi", ".mov"))
 
     if is_image:
-        static = cv2.imread(source)
+        source_path = str(source)
+        static = cv2.imread(source_path)
         if static is None:
-            print(f"Could not open image: {source}")
+            print(f"Could not open image: {source_path}")
             return
     else:
         cap = cv2.VideoCapture(source)
@@ -104,11 +105,13 @@ def main():
 
         # Stack: original | masked result | binary mask
         mask_bgr = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-        display = np.hstack([
-            cv2.resize(frame,   (400, 300)),
-            cv2.resize(result,  (400, 300)),
-            cv2.resize(mask_bgr,(400, 300)),
-        ])
+        display = np.hstack(
+            [
+                cv2.resize(frame, (400, 300)),
+                cv2.resize(result, (400, 300)),
+                cv2.resize(mask_bgr, (400, 300)),
+            ]
+        )
         overlay_text(display, lower, upper)
         cv2.imshow(WINDOW, display)
 

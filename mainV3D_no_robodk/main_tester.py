@@ -2,30 +2,28 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from collections import deque
 import json
 import time
-from typing import Any, Optional, cast
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, cast
 
 import cv2
 import numpy as np
-
 from ARUCO_reader import ArucoReader
-from Cam_administrator import prompt_default_camera, create_latest_frame_camera
+from Cam_administrator import create_latest_frame_camera, prompt_default_camera
 from homography_Calibrator import HomographyCalibrator
-from vision_state import SharedVisionState
 from vision_processor import configure_pin_rendering, process_camera_step
 from vision_renderer import (
-    draw_performance_overlay,
-    draw_debug_overlay,
-    draw_debug_aruco_markers,
-    draw_bolo_overlay,
     draw_ball_position,
+    draw_bolo_overlay,
+    draw_debug_aruco_markers,
+    draw_debug_overlay,
+    draw_performance_overlay,
 )
+from vision_state import SharedVisionState
 
-
-F9_KEYS = {120, 0x78, 0x780000}
+F9_KEYS = {120, 0x780000}
 CPU_WORKERS = 2
 
 
@@ -38,7 +36,7 @@ def toggle_debug(debug_mode: bool) -> bool:
     return new_state
 
 
-def run_calibration_inline(cam_reader: Any) -> Optional[dict[str, Any]]:
+def run_calibration_inline(cam_reader: Any) -> dict[str, Any] | None:
     """Run calibration in the main window (inline, non-blocking)."""
     print("\n=== Calibration Mode ===")
     print("Find and capture chessboard 3 times")
@@ -49,7 +47,7 @@ def run_calibration_inline(cam_reader: Any) -> Optional[dict[str, Any]]:
     image_points: list[np.ndarray] = []
     objp = HomographyCalibrator._build_object_points()
     chessboard_size = HomographyCalibrator.CHESSBOARD_SIZE
-    frame_times = deque(maxlen=60)
+    frame_times: deque[float] = deque(maxlen=60)
     calibration_debug = False
     cpu_threads = HomographyCalibrator._configure_cpu_backend()
 
@@ -66,13 +64,13 @@ def run_calibration_inline(cam_reader: Any) -> Optional[dict[str, Any]]:
         if found:
             refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
             cv2.drawChessboardCorners(display, chessboard_size, refined, found)
-            message = (
-                f"Chessboard detected {len(image_points)}/{HomographyCalibrator.REQUIRED_CAPTURES} - press SPACE"
-            )
+            message = f"Chessboard detected {len(image_points)}/{HomographyCalibrator.REQUIRED_CAPTURES} - press SPACE"
             color = (0, 200, 0)
         else:
             refined = None
-            message = f"Find chessboard {len(image_points)}/{HomographyCalibrator.REQUIRED_CAPTURES}"
+            message = (
+                f"Find chessboard {len(image_points)}/{HomographyCalibrator.REQUIRED_CAPTURES}"
+            )
             color = (0, 0, 255)
 
         cv2.putText(display, message, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
@@ -81,7 +79,9 @@ def run_calibration_inline(cam_reader: Any) -> Optional[dict[str, Any]]:
         frame_times.append(elapsed)
         avg = sum(frame_times) / len(frame_times) if frame_times else 0.0
         fps = (1.0 / avg) if avg > 0 else 0.0
-        cv2.putText(display, f"FPS: {fps:.1f}", (12, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(
+            display, f"FPS: {fps:.1f}", (12, 62), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
+        )
 
         if calibration_debug:
             cv2.putText(
@@ -145,9 +145,7 @@ def run_calibration_inline(cam_reader: Any) -> Optional[dict[str, Any]]:
         "inliers": int(mask.sum()) if mask is not None else len(img_all),
     }
 
-    HomographyCalibrator.CALIBRATION_FILE.write_text(
-        json.dumps(data, indent=2), encoding="utf-8"
-    )
+    HomographyCalibrator.CALIBRATION_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
     print(f"Calibration saved to {HomographyCalibrator.CALIBRATION_FILE}")
     print("Returning to main view...\n")
     return HomographyCalibrator.load_positions_file()
@@ -174,7 +172,7 @@ def main() -> int:
     )
     use_multithread = True
     debug_mode = False
-    frame_times = deque(maxlen=60)
+    frame_times: deque[float] = deque(maxlen=60)
 
     print("Compute backend: CPU multithread")
 
@@ -183,7 +181,7 @@ def main() -> int:
     print("\n=== Main Tester (No RoboDK) ===")
     print("Keys: ESC/q=exit, r=regenerate calibration, F9=toggle debug, SPACE=reset pins")
 
-    executor: Optional[ThreadPoolExecutor] = None
+    executor: ThreadPoolExecutor | None = None
     try:
         if use_multithread:
             executor = ThreadPoolExecutor(max_workers=CPU_WORKERS)

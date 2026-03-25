@@ -22,20 +22,21 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, cast
 
 _OUTPUT_FILE = Path(__file__).resolve().parent / "ball_position_output.json"
 
 
-def _read_snapshot() -> dict:
+def _read_snapshot() -> dict[str, Any]:
     """Read the latest JSON snapshot written by the pipeline."""
     try:
-        return json.loads(_OUTPUT_FILE.read_text(encoding="utf-8"))
+        data = json.loads(_OUTPUT_FILE.read_text(encoding="utf-8"))
+        return cast(dict[str, Any], data)
     except (OSError, json.JSONDecodeError):
         return {}
 
 
-def get_posicion_bola() -> Optional[dict]:
+def get_posicion_bola() -> dict | None:
     """Return the latest ball position, or None if no ball is detected.
 
     Returned dict keys:
@@ -44,10 +45,11 @@ def get_posicion_bola() -> Optional[dict]:
         radius_px — detected radius in pixels
         source    — detection method (always 'COLOR')
     """
-    return _read_snapshot().get("ball")
+    value = _read_snapshot().get("ball")
+    return cast(dict[str, Any] | None, value)
 
 
-def get_posicion_aruco(marker_id: int) -> Optional[dict]:
+def get_posicion_aruco(marker_id: int) -> dict | None:
     """Return the latest data for a specific ArUco marker, or None if not found.
 
     Parameters
@@ -64,10 +66,11 @@ def get_posicion_aruco(marker_id: int) -> Optional[dict]:
     markers = _read_snapshot().get("aruco_markers", [])
     for entry in markers:
         if entry.get("id") == int(marker_id):
-            return entry
+            return cast(dict[str, Any], entry)
     return None
 
 
-def get_todos_los_aruco() -> list:
+def get_todos_los_aruco() -> list[dict[str, Any]]:
     """Return a list of all ArUco markers visible in the last frame."""
-    return _read_snapshot().get("aruco_markers", [])
+    value = _read_snapshot().get("aruco_markers", [])
+    return cast(list[dict[str, Any]], value)

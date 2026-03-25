@@ -13,11 +13,9 @@ Future improvements:
 from __future__ import annotations
 
 import time
-import threading
-from typing import Optional
 
-from vision_state import SharedVisionState
 from robodk_worker import RoboDKWorker
+from vision_state import SharedVisionState
 
 
 def example_integrated_main() -> None:

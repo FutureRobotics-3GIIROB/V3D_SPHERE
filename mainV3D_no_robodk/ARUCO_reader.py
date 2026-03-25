@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import struct
 import time
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
@@ -16,10 +16,10 @@ class ArucoDetection:
     """Single ArUco detection data."""
 
     id: int
-    center_px: Tuple[int, int]
+    center_px: tuple[int, int]
     corners: np.ndarray
-    rvec: Optional[np.ndarray] = None
-    tvec: Optional[np.ndarray] = None
+    rvec: np.ndarray | None = None
+    tvec: np.ndarray | None = None
 
 
 @dataclass
@@ -27,7 +27,7 @@ class ArucoFrameResult:
     """Detection output for one frame."""
 
     frame: np.ndarray
-    detections: List[ArucoDetection] = field(default_factory=list)
+    detections: list[ArucoDetection] = field(default_factory=list)
 
 
 @dataclass
@@ -45,7 +45,7 @@ class STLMesh:
         self.triangles = triangles.astype(np.float32)
 
     @classmethod
-    def from_file(cls, stl_path: str) -> "STLMesh":
+    def from_file(cls, stl_path: str) -> STLMesh:
         path = Path(stl_path)
         if not path.exists():
             raise FileNotFoundError(f"STL file not found: {stl_path}")
@@ -63,19 +63,19 @@ class ArucoObject:
     """Configurable model renderer associated to one marker id."""
 
     def __init__(self):
-        self.stl_mesh: Optional[STLMesh] = None
+        self.stl_mesh: STLMesh | None = None
         self.scale: float = 1.0
         self.offset_tvec = np.zeros((3,), dtype=np.float32)
         self.offset_rvec = np.zeros((3,), dtype=np.float32)
-        self.color: Tuple[int, int, int] = (255, 180, 40)
+        self.color: tuple[int, int, int] = (255, 180, 40)
 
     def render(
         self,
         stl_path: str,
-        pose_offsets: Optional[Sequence[Sequence[float]]] = None,
+        pose_offsets: Sequence[Sequence[float]] | None = None,
         scale: float = 1.0,
-        color: Tuple[int, int, int] = (255, 180, 40),
-    ) -> "ArucoObject":
+        color: tuple[int, int, int] = (255, 180, 40),
+    ) -> ArucoObject:
         """Load a model and configure how it should be rendered for this marker."""
         self.stl_mesh = STLMesh.from_file(stl_path)
         self.scale = float(scale)
@@ -93,7 +93,7 @@ class ArucoObject:
         dist_coeffs: np.ndarray,
         base_rvec: np.ndarray,
         base_tvec: np.ndarray,
-        extra_rvec: Optional[np.ndarray] = None,
+        extra_rvec: np.ndarray | None = None,
         fallen: bool = False,
     ) -> None:
         """Project model triangles and draw wireframe over image."""
@@ -113,7 +113,9 @@ class ArucoObject:
             rot_extra, _ = cv2.Rodrigues(extra_rvec32)
             rot_total = rot_total @ rot_extra
         rvec, _ = cv2.Rodrigues(rot_total)
-        tvec = np.asarray(base_tvec, dtype=np.float32).reshape(3, 1) + self.offset_tvec.reshape(3, 1)
+        tvec = np.asarray(base_tvec, dtype=np.float32).reshape(3, 1) + self.offset_tvec.reshape(
+            3, 1
+        )
 
         triangles = self.stl_mesh.triangles * self.scale
         for tri in triangles:
@@ -141,7 +143,7 @@ class ArucoReader:
         marker_size_m: float = 0.05,
         dictionary_name: str = "original",
         enable_fallback_dictionary: bool = True,
-        expected_ids: Optional[Iterable[int]] = None,
+        expected_ids: Iterable[int] | None = None,
     ):
         self.marker_size_m = marker_size_m
         self.dictionary_name = dictionary_name
@@ -166,15 +168,15 @@ class ArucoReader:
 
         self.detector = aruco.ArucoDetector(self.dictionary, params)
         self.fallback_detector = aruco.ArucoDetector(self.fallback_dictionary, params)
-        self.camera_matrix: Optional[np.ndarray] = None
+        self.camera_matrix: np.ndarray | None = None
         self.dist_coeffs = np.zeros((5, 1), dtype=np.float32)
-        self.objects: Dict[int, ArucoObject] = {}
-        self.pin_animation: Dict[int, PinAnimationState] = {}
+        self.objects: dict[int, ArucoObject] = {}
+        self.pin_animation: dict[int, PinAnimationState] = {}
         self.pin_fall_speed_deg_per_s: float = 220.0
         self.pin_fall_target_deg: float = 90.0
         self._last_process_ts: float = time.perf_counter()
         # Cache last known corners so occlusion by the ball doesn't break detection.
-        self._last_seen_corners: Dict[int, np.ndarray] = {}
+        self._last_seen_corners: dict[int, np.ndarray] = {}
 
     def _get_pin_state(self, marker_id: int) -> PinAnimationState:
         """Get or create pin animation state by marker id."""
@@ -194,14 +196,14 @@ class ArucoReader:
     @staticmethod
     def _is_ball_over_marker(
         marker_corners: np.ndarray,
-        ball_center_px: Tuple[int, int],
+        ball_center_px: tuple[int, int],
         ball_radius_px: float,
     ) -> bool:
         """Return True when ball center is over marker or close enough to its center."""
         corners = marker_corners.reshape(4, 2).astype(np.float32)
         center = corners.mean(axis=0)
-        half_w = np.linalg.norm(corners[1] - corners[0]) * 0.5
-        half_h = np.linalg.norm(corners[2] - corners[1]) * 0.5
+        half_w = float(np.linalg.norm(corners[1] - corners[0]) * 0.5)
+        half_h = float(np.linalg.norm(corners[2] - corners[1]) * 0.5)
         marker_radius = max(half_w, half_h)
 
         dx = float(ball_center_px[0] - center[0])
@@ -214,7 +216,7 @@ class ArucoReader:
 
         # Also accept strict inside polygon.
         inside = cv2.pointPolygonTest(corners.astype(np.int32), ball_center_px, False)
-        return inside >= 0
+        return float(inside) >= 0.0
 
     def reset_all_pins(self) -> None:
         """Reset every pin animation back to standing (0 degrees)."""
@@ -225,7 +227,7 @@ class ArucoReader:
     def update_pin_targets_from_ball(
         self,
         detections: Sequence[ArucoDetection],
-        ball_center_px: Optional[Tuple[int, int]],
+        ball_center_px: tuple[int, int] | None,
         ball_radius_px: float = 0.0,
         min_pin_id: int = 2,
     ) -> None:
@@ -262,15 +264,15 @@ class ArucoReader:
     def _filter_candidates(
         self,
         corners: Sequence[np.ndarray],
-        ids: Optional[np.ndarray],
-        frame_shape: Tuple[int, int],
-    ) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
+        ids: np.ndarray | None,
+        frame_shape: tuple[int, int],
+    ) -> tuple[list[np.ndarray], np.ndarray | None]:
         """Filter out weak/false detections and deduplicate by marker id."""
         if ids is None or len(ids) == 0:
             return [], None
 
         frame_h, frame_w = frame_shape
-        kept: Dict[int, Tuple[float, np.ndarray]] = {}
+        kept: dict[int, tuple[float, np.ndarray]] = {}
 
         for marker_corners, marker_id in zip(corners, ids.flatten()):
             marker_id = int(marker_id)
@@ -287,10 +289,10 @@ class ArucoReader:
                 continue
 
             edges = [
-                np.linalg.norm(pts[1] - pts[0]),
-                np.linalg.norm(pts[2] - pts[1]),
-                np.linalg.norm(pts[3] - pts[2]),
-                np.linalg.norm(pts[0] - pts[3]),
+                float(np.linalg.norm(pts[1] - pts[0])),
+                float(np.linalg.norm(pts[2] - pts[1])),
+                float(np.linalg.norm(pts[3] - pts[2])),
+                float(np.linalg.norm(pts[0] - pts[3])),
             ]
             min_edge = min(edges)
             max_edge = max(edges)
@@ -319,7 +321,7 @@ class ArucoReader:
         return self.objects[marker_id]
 
     def set_camera_params(
-        self, frame_shape: Tuple[int, int], fx: float = 900.0, fy: float = 900.0
+        self, frame_shape: tuple[int, int], fx: float = 900.0, fy: float = 900.0
     ) -> None:
         """Set simple camera intrinsics from frame size when no calibration is provided."""
         height, width = frame_shape
@@ -343,11 +345,17 @@ class ArucoReader:
         camera_matrix = np.asarray(self.camera_matrix, dtype=np.float32)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, _ = self.detector.detectMarkers(gray)
+        corners_raw, ids_raw, _ = self.detector.detectMarkers(gray)
+        corners: list[np.ndarray] = [np.asarray(c, dtype=np.float32) for c in corners_raw]
+        ids: np.ndarray | None = (
+            np.asarray(ids_raw, dtype=np.int32) if ids_raw is not None else None
+        )
 
         # Optional fallback for compatibility when marker set is mixed.
         if (ids is None or len(ids) == 0) and self.enable_fallback_dictionary:
-            corners, ids, _ = self.fallback_detector.detectMarkers(gray)
+            corners_raw, ids_raw, _ = self.fallback_detector.detectMarkers(gray)
+            corners = [np.asarray(c, dtype=np.float32) for c in corners_raw]
+            ids = np.asarray(ids_raw, dtype=np.int32) if ids_raw is not None else None
 
         corners, ids = self._filter_candidates(corners, ids, frame.shape[:2])
 
@@ -507,8 +515,8 @@ def _parse_binary_stl(raw_bytes: bytes) -> np.ndarray:
 
 def _parse_ascii_stl(text: str) -> np.ndarray:
     """Parse ASCII STL triangles."""
-    verts: List[List[float]] = []
-    triangles: List[np.ndarray] = []
+    verts: list[list[float]] = []
+    triangles: list[np.ndarray] = []
 
     for line in text.splitlines():
         line = line.strip().lower()

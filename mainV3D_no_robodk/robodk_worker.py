@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
 
 from vision_state import SharedVisionState
 
@@ -27,7 +26,7 @@ class RoboDKWorker:
     def __init__(self, vision_state: SharedVisionState) -> None:
         """Initialize worker with shared vision state reference."""
         self.vision_state = vision_state
-        self.thread: Optional[threading.Thread] = None
+        self.thread: threading.Thread | None = None
         self._running = False
 
     def start(self) -> None:
@@ -67,7 +66,7 @@ class RoboDKWorker:
             # (implementation to be added when RoboDK is available)
             time.sleep(0.01)
 
-    def read_ball_position(self) -> Optional[dict[str, object]]:
+    def read_ball_position(self) -> dict[str, object] | None:
         """Get current ball position for RoboDK control."""
         ball = self.vision_state.get_ball()
         if ball and ball.pixel:

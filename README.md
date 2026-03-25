@@ -11,3 +11,20 @@
 
 <img width="1237" height="1067" alt="image" src="https://github.com/user-attachments/assets/a7c2ab3b-a157-433a-9643-45677d8f2c7d" />
 <img width="1759" height="1785" alt="image" src="https://github.com/user-attachments/assets/999015e7-1812-4bd9-854e-8fe58e2689b5" />
+
+## Calidad de codigo
+
+Este repositorio esta configurado para trabajar con un flujo estandar de calidad:
+
+- Ruff: lint y orden de imports
+- Black: formateo automatico
+- MyPy: verificacion de tipos
+- pre-commit: ejecucion automatica de checks antes de cada commit
+
+### Comandos recomendados
+
+- Instalar dependencias de desarrollo: `pip install -e .[dev]`
+- Ejecutar lint y auto-fixes: `ruff check . --fix`
+- Formatear proyecto: `black .`
+- Verificar tipos: `mypy`
+- Ejecutar pipeline completo local: `pre-commit run --all-files`

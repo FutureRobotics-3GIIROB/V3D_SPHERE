@@ -1,18 +1,22 @@
+import builtins
+
 from robodk.robolink import *
 from robodk.robomath import *
-import builtins
 
 PRINT_CONSOLE = False
 SHOW_ERROR = True
 
+
 def getRDK():
     return Robolink()
 
-def print(mensaje, popup = True):
+
+def print(mensaje, popup=True):
     if PRINT_CONSOLE:
         builtins.print(mensaje)
     else:
         getRDK().ShowMessage(mensaje, popup)
+
 
 def addFrame(nombre, pose=None):
     rdk = getRDK()
@@ -27,6 +31,7 @@ def addFrame(nombre, pose=None):
     frame.setPose(pose)
     return frame
 
+
 def getRobot(nombre):
     rdk = getRDK()
     robot = rdk.Item(nombre, ITEM_TYPE_ROBOT)
@@ -34,6 +39,7 @@ def getRobot(nombre):
         print(f"Error: Robot {nombre} no encontrado.", SHOW_ERROR)
         return None
     return robot
+
 
 def getFrame(nombre):
     rdk = getRDK()
@@ -44,6 +50,7 @@ def getFrame(nombre):
         return frame
     return frame
 
+
 def getItem(nombre, tipo=None):
     rdk = getRDK()
     item = rdk.Item(nombre, tipo) if tipo else rdk.Item(nombre)
@@ -51,6 +58,7 @@ def getItem(nombre, tipo=None):
         print(f"Error: Objeto {nombre} no encontrado.", SHOW_ERROR)
         return None
     return item
+
 
 def createOrUpdateTarget(nombre, robot, pose):
     """

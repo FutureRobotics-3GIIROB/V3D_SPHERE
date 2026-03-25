@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from ARUCO_reader import ArucoReader
 from ball_detector import detect_ball, draw_ball
 from homography_Calibrator import HomographyCalibrator
 from vision_state import BallState, FrameStepResult, MarkerState
-
 
 MIN_PIN_ID = 1
 MAX_PIN_ID = 10
@@ -40,26 +39,26 @@ def configure_pin_rendering(aruco_reader: ArucoReader) -> bool:
 def detect_aruco_and_ball(
     frame: Any,
     aruco_reader: ArucoReader,
-    executor: Optional[ThreadPoolExecutor],
-) -> tuple[Any, Optional[dict[str, Any]]]:
+    executor: ThreadPoolExecutor | None,
+) -> tuple[Any, dict[str, Any] | None]:
     """Run ArUco and ball detection for one frame."""
     if executor is not None:
         future_aruco = executor.submit(aruco_reader.process_frame, frame, True)
         future_ball = executor.submit(detect_ball, frame)
-        return future_aruco.result(), cast(Optional[dict[str, Any]], future_ball.result())
+        return future_aruco.result(), cast(dict[str, Any] | None, future_ball.result())
 
     aruco_result = aruco_reader.process_frame(frame, draw=True)
-    return aruco_result, cast(Optional[dict[str, Any]], detect_ball(frame))
+    return aruco_result, cast(dict[str, Any] | None, detect_ball(frame))
 
 
-def extract_ball_data(det: Optional[dict[str, Any]]) -> tuple[Optional[tuple[int, int]], float]:
+def extract_ball_data(det: dict[str, Any] | None) -> tuple[tuple[int, int] | None, float]:
     """Normalize detector output into typed center/radius values."""
     if not det:
         return None, 0.0
 
     center_raw = det.get("center")
-    center: Optional[tuple[int, int]] = None
-    if isinstance(center_raw, (tuple, list)) and len(center_raw) >= 2:
+    center: tuple[int, int] | None = None
+    if isinstance(center_raw, tuple | list) and len(center_raw) >= 2:
         center = (int(center_raw[0]), int(center_raw[1]))
     radius = float(det.get("radius", 0.0))
     return center, radius
@@ -73,7 +72,10 @@ def build_aruco_entries(
     marker_states: list[MarkerState] = []
     for det in detections:
         pin_state = aruco_reader._get_pin_state(int(det.id)) if int(det.id) >= MIN_PIN_ID else None
-        fallen = pin_state is not None and pin_state.current_tilt_deg >= aruco_reader.pin_fall_target_deg - 1.0
+        fallen = (
+            pin_state is not None
+            and pin_state.current_tilt_deg >= aruco_reader.pin_fall_target_deg - 1.0
+        )
         estado = "down" if fallen else "up"
         entry: dict[str, Any] = {
             "id": int(det.id),
@@ -99,14 +101,16 @@ def build_aruco_entries(
 
 def build_ball_payload(
     frame: Any,
-    ball_center: Optional[tuple[int, int]],
+    ball_center: tuple[int, int] | None,
     ball_radius: float,
     homography: Any,
     source_label: str,
-) -> tuple[Optional[dict[str, Any]], BallState]:
+) -> tuple[dict[str, Any] | None, BallState]:
     """Build serializable ball payload and BallState object."""
     if ball_center is None:
-        ball_state = BallState(pixel=None, xyz_mm=(0.0, 0.0, 0.0), radius_px=0.0, source=source_label)
+        ball_state = BallState(
+            pixel=None, xyz_mm=(0.0, 0.0, 0.0), radius_px=0.0, source=source_label
+        )
         return None, ball_state
 
     x_mm, y_mm = HomographyCalibrator.transform_point(ball_center, homography)
@@ -130,7 +134,7 @@ def process_camera_step(
     aruco_reader: ArucoReader,
     homography: Any,
     use_stl_render: bool,
-    executor: Optional[ThreadPoolExecutor],
+    executor: ThreadPoolExecutor | None,
 ) -> FrameStepResult:
     """Process one camera frame and return all output artifacts.
 

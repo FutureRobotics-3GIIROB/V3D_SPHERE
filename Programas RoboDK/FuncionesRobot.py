@@ -2,6 +2,7 @@ from FuncionesBase import *
 
 SHOW_ERROR = True
 
+
 def setSpeed(robot, velLineal, accelLineal, velAngular, accelAngular):
     if robot:
         robot.setSpeed(velLineal, velAngular, accelLineal, accelAngular)
@@ -9,7 +10,8 @@ def setSpeed(robot, velLineal, accelLineal, velAngular, accelAngular):
     else:
         return False
 
-def moveTo(robot, obj, tipoMov = "MoveJ"):
+
+def moveTo(robot, obj, tipoMov="MoveJ"):
     if robot and obj:
         if tipoMov == "MoveJ":
             robot.MoveJ(obj)
@@ -18,6 +20,7 @@ def moveTo(robot, obj, tipoMov = "MoveJ"):
         return True
     else:
         return None
+
 
 def setPose(robot, pose):
     if robot:

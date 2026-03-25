@@ -5,6 +5,78 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "opencv-python>=4.13.0.92",
+    "numpy>=1.20",
+    "opencv-contrib-python>=4.5",
     "robodk>=5.9.4",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "black>=24.10.0",
+    "mypy>=1.11.2",
+    "pre-commit>=3.8.0",
+    "ruff>=0.6.9",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+include = "\\.pyi?$"
+exclude = '''
+/(\
+    \.git
+  | \.venv
+  | __pycache__
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+]
+ignore = [
+    "E501",
+    "B008",
+    "B905",
+    "F403",
+    "F405",
+    "UP007",
+]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+files = ["mainV3D_no_robodk"]
+exclude = [
+    "^\\.venv/",
+    "^__pycache__/",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "cv2",
+    "cv2.*",
+    "robodk",
+    "robodk.*",
+]
+ignore_missing_imports = true

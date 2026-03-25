@@ -5,7 +5,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-
 # Internal corners used by OpenCV findChessboardCorners.
 INNER_CORNERS = (6, 9)
 # Number of drawn squares is corners + 1 per axis.

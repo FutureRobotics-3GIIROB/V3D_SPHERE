@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false
+
 """
 main_robot.py
 ─────────────
@@ -9,40 +11,37 @@ Combina el tracking de la pelota con el control del robot en RoboDK.
                       a la posición detectada.
 """
 
-import time
 import threading
-import cv2
+import time
 
+import cv2
+from aruco_lib import (
+    BALL_ARUCO_ID,
+    ArucoTracker,
+)
 from ball_detector import detect_ball, draw_ball
 from calibracion import HomographyCalibrator
-from tracker import BallTracker
-from aruco_lib import (
-    ArucoTracker,
-    list_available_cameras,
-    load_camera_config,
-    BALL_ARUCO_ID,
-    MIN_BOLO_ID
-)
-from FuncionesBase import getRobot, getFrame, createOrUpdateTarget
+from FuncionesBase import createOrUpdateTarget, getRobot
 from FuncionesRobot import moveTo, setSpeed
-from robodk.robomath import transl, roty
 from robodk.robolink import TargetReachError
+from robodk.robomath import roty, transl
+from tracker import BallTracker
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-ROBOT_NAME     = "Bola"       # nombre del objeto marcador en RoboDK
-UR3E_NAME      = "UR3e"       # nombre del robot UR3e en RoboDK  ← ajusta si es distinto
-TARGET_NAME    = "BallApproach"  # nombre del target que se crea/reutiliza en RoboDK
-TARGET_FRAME   = "BallTarget" # nombre del frame objetivo en RoboDK
-REDETECT_EVERY = 5            # frames sin tracking antes de re-detectar
-ROBOT_SPEED_LIN  = 200        # mm/s   velocidad lineal
-ROBOT_SPEED_ANG  = 30         # deg/s  velocidad angular
+ROBOT_NAME = "Bola"  # nombre del objeto marcador en RoboDK
+UR3E_NAME = "UR3e"  # nombre del robot UR3e en RoboDK  ← ajusta si es distinto
+TARGET_NAME = "BallApproach"  # nombre del target que se crea/reutiliza en RoboDK
+TARGET_FRAME = "BallTarget"  # nombre del frame objetivo en RoboDK
+REDETECT_EVERY = 5  # frames sin tracking antes de re-detectar
+ROBOT_SPEED_LIN = 200  # mm/s   velocidad lineal
+ROBOT_SPEED_ANG = 30  # deg/s  velocidad angular
 # Modo de detección: True = usar ArucoTracker, False = solo detección por color
 USE_ARUCO_TRACKER = True
 
 # ── Variable global compartida ────────────────────────────────────────────────
 # Formato: {'pixel': [px, py], 'xyz_mm': [X, Y, Z]}  ó  None
 ball_position: dict | None = None
-_lock = threading.Lock()      # acceso seguro entre hilos
+_lock = threading.Lock()  # acceso seguro entre hilos
 
 
 def camera_loop_aruco() -> None:
@@ -55,32 +54,27 @@ def camera_loop_aruco() -> None:
         print("[Cámara] ERROR: No se encontró calibración")
         print("[Cámara] Ejecuta: python calibracion.py --capture")
         return
-    
-    homography = calib_data['homography_matrix']
 
-    tracker = ArucoTracker(
-        camera_source=0,
-        marker_size_m=0.05,
-        show_axes=False,
-        debug_mode=False
-    )
-    
+    homography = calib_data["homography_matrix"]
+
+    tracker = ArucoTracker(camera_source=0, marker_size_m=0.05, show_axes=False, debug_mode=False)
+
     if not tracker.start():
         print("[Cámara] ERROR: No se pudo iniciar ArucoTracker")
         return
-    
+
     print("[Cámara] ArucoTracker iniciado")
-    
+
     try:
         while True:
             frame_data = tracker.get_latest_frame()
             if frame_data is None:
                 time.sleep(0.01)
                 continue
-            
+
             frame = frame_data.frame
             h, w = frame.shape[:2]
-            
+
             ball_found = False
             for det in frame_data.aruco_detections:
                 if det.id == BALL_ARUCO_ID:
@@ -89,34 +83,35 @@ def camera_loop_aruco() -> None:
                         xyz = [
                             det.world_position[0] * 1000,
                             det.world_position[1] * 1000,
-                            det.world_position[2] * 1000
+                            det.world_position[2] * 1000,
                         ]
                         pos = {"pixel": list(ball_center_px), "xyz_mm": xyz}
-                        
+
                         with _lock:
                             ball_position = pos
-                        
+
                         ball_found = True
                         break
-            
+
             if not ball_found:
                 ball_det = detect_ball(frame)
                 if ball_det:
-                    ball_center_px = ball_det['center']
+                    ball_center_px = ball_det["center"]
                     draw_ball(frame, ball_det, color=(0, 255, 0))
-                    
+
                     point_transformed = HomographyCalibrator.transform_point(
-                        ball_center_px, homography)
+                        ball_center_px, homography
+                    )
                     xyz_mm = list(point_transformed) + [0]
-                    
+
                     pos = {"pixel": list(ball_center_px), "xyz_mm": xyz_mm}
                     with _lock:
                         ball_position = pos
-            
+
             cv2.imshow("V3D Tracking (Robot)", frame)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
-    
+
     finally:
         tracker.stop()
         cv2.destroyAllWindows()
@@ -133,8 +128,8 @@ def camera_loop() -> None:
         print("[Cámara] ERROR: No se encontró calibración")
         print("[Cámara] Ejecuta: python calibracion.py --capture")
         return
-    
-    homography = calib_data['homography_matrix']
+
+    homography = calib_data["homography_matrix"]
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
@@ -181,8 +176,15 @@ def camera_loop() -> None:
                     lost_count = 0
                     print(f"[Cámara] Pelota re-detectada en {last_det['center']}")
                 else:
-                    cv2.putText(frame, "Buscando...", (10, h - 20),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(
+                        frame,
+                        "Buscando...",
+                        (10, h - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 0, 255),
+                        2,
+                    )
         else:
             lost_count = 0
 
@@ -222,9 +224,9 @@ def _is_reachable(robot, pose) -> bool:
     try:
         joints = robot.SolveIK(pose)
         # Mat.rows es una lista de listas; si está vacía, no hay solución
-        if hasattr(joints, 'rows'):
+        if hasattr(joints, "rows"):
             return len(joints.rows) > 0 and len(joints.rows[0]) > 0
-        return hasattr(joints, '__len__') and len(joints) > 0
+        return hasattr(joints, "__len__") and len(joints) > 0
     except Exception:
         return False
 
@@ -252,7 +254,6 @@ def _move_closest(robot, target_pose, steps: int = 10) -> bool:
 
     # Búsqueda binaria
     for _ in range(steps):
-
         mid = (lo + hi) / 2.0
 
         interp = transl(
@@ -276,6 +277,7 @@ def _move_closest(robot, target_pose, steps: int = 10) -> bool:
 
     return False
 
+
 # ── Hilo de robot ─────────────────────────────────────────────────────────────
 def robot_loop() -> None:
     """
@@ -297,7 +299,7 @@ def robot_loop() -> None:
     setSpeed(ur3e, ROBOT_SPEED_LIN, ROBOT_SPEED_LIN, ROBOT_SPEED_ANG, ROBOT_SPEED_ANG)
     print(f"[Robot] '{ROBOT_NAME}' y '{UR3E_NAME}' listos.")
 
-    last_xyz = None   # evita mover si la posición no ha cambiado
+    last_xyz = None  # evita mover si la posición no ha cambiado
 
     while True:
         # ── Leer variable global de forma segura ──
@@ -309,24 +311,28 @@ def robot_loop() -> None:
             xyz_flat = [xyz[1], xyz[0], 0]
 
             if xyz_flat != last_xyz:
-                bx, by, bz = xyz[1]-265.000, xyz[0], 50
+                bx, by, bz = xyz[1] - 265.000, xyz[0], 50
 
                 # Mover robot Bola (como antes)
                 moveTo(bola, xyz_flat, "MoveJ")
 
                 # Crear/actualizar target en la posición exacta de la pelota (visual)
-                ball_pose = transl(bx, by, bz)*roty(3.1416)
+                ball_pose = transl(bx, by, bz) * roty(3.1416)
                 createOrUpdateTarget(TARGET_NAME, ur3e, ball_pose)
 
                 # Mover UR3e lo más cerca posible del objetivo
                 reached = _move_closest(ur3e, ball_pose)
                 if not reached:
-                    print(f"[Robot] UR3e: máximo acercamiento a  X:{bx:.1f}  Y:{by:.1f}  Z:{bz:.1f} mm")
+                    print(
+                        f"[Robot] UR3e: máximo acercamiento a  X:{bx:.1f}  Y:{by:.1f}  Z:{bz:.1f} mm"
+                    )
 
                 last_xyz = xyz_flat
-                print(f"[Robot] Bola → X:{bx:.1f}  Y:{by:.1f}  Z:0  |  UR3e → X:{bx:.1f}  Y:{by:.1f}  Z:{bz:.1f} mm")
+                print(
+                    f"[Robot] Bola → X:{bx:.1f}  Y:{by:.1f}  Z:0  |  UR3e → X:{bx:.1f}  Y:{by:.1f}  Z:{bz:.1f} mm"
+                )
 
-        time.sleep(0.05)   # 20 Hz
+        time.sleep(0.05)  # 20 Hz
 
 
 # ── Punto de entrada ──────────────────────────────────────────────────────────
