@@ -102,9 +102,17 @@ class ArucoObject:
 
         draw_color = (0, 0, 255) if fallen else self.color
 
-        rvec = np.asarray(base_rvec, dtype=np.float32).reshape(3, 1) + self.offset_rvec.reshape(3, 1)
+        # Compose rotations in SO(3): marker pose * static model offset * dynamic tilt.
+        base_rvec32 = np.asarray(base_rvec, dtype=np.float32).reshape(3, 1)
+        offset_rvec32 = self.offset_rvec.reshape(3, 1)
+        rot_base, _ = cv2.Rodrigues(base_rvec32)
+        rot_offset, _ = cv2.Rodrigues(offset_rvec32)
+        rot_total = rot_base @ rot_offset
         if extra_rvec is not None:
-            rvec = rvec + np.asarray(extra_rvec, dtype=np.float32).reshape(3, 1)
+            extra_rvec32 = np.asarray(extra_rvec, dtype=np.float32).reshape(3, 1)
+            rot_extra, _ = cv2.Rodrigues(extra_rvec32)
+            rot_total = rot_total @ rot_extra
+        rvec, _ = cv2.Rodrigues(rot_total)
         tvec = np.asarray(base_tvec, dtype=np.float32).reshape(3, 1) + self.offset_tvec.reshape(3, 1)
 
         triangles = self.stl_mesh.triangles * self.scale
@@ -253,8 +261,8 @@ class ArucoReader:
 
     def _filter_candidates(
         self,
-        corners: List[np.ndarray],
-        ids: np.ndarray,
+        corners: Sequence[np.ndarray],
+        ids: Optional[np.ndarray],
         frame_shape: Tuple[int, int],
     ) -> Tuple[List[np.ndarray], Optional[np.ndarray]]:
         """Filter out weak/false detections and deduplicate by marker id."""
@@ -332,6 +340,7 @@ class ArucoReader:
         output = frame.copy() if draw else frame
         if self.camera_matrix is None:
             self.set_camera_params(frame.shape[:2])
+        camera_matrix = np.asarray(self.camera_matrix, dtype=np.float32)
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         corners, ids, _ = self.detector.detectMarkers(gray)
@@ -376,7 +385,7 @@ class ArucoReader:
             ok, rvec, tvec = cv2.solvePnP(
                 obj_points,
                 corner_2d.astype(np.float32),
-                self.camera_matrix,
+                camera_matrix,
                 self.dist_coeffs,
                 flags=cv2.SOLVEPNP_ITERATIVE,
             )
@@ -390,7 +399,7 @@ class ArucoReader:
                     dynamic_rvec = np.array([np.deg2rad(tilt_deg), 0.0, 0.0], dtype=np.float32)
                     self.objects[int(marker_id)].draw(
                         output,
-                        self.camera_matrix,
+                        camera_matrix,
                         self.dist_coeffs,
                         rvec,
                         tvec,

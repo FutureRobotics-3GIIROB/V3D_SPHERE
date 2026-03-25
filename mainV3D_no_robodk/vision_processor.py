@@ -15,6 +15,9 @@ from vision_state import BallState, FrameStepResult, MarkerState
 MIN_PIN_ID = 1
 MAX_PIN_ID = 10
 DEFAULT_BOLO_MODEL = Path(__file__).resolve().parent / "bolo.stl"
+BOLO_STL_SCALE = 0.003
+BOLO_STL_ROTATION_RVEC = (3.14159265, 0.0, 0.0)
+BOLO_STL_TVEC_OFFSET = (0.0, 0.0, -0.01)
 
 
 def configure_pin_rendering(aruco_reader: ArucoReader) -> bool:
@@ -24,8 +27,8 @@ def configure_pin_rendering(aruco_reader: ArucoReader) -> bool:
         for marker_id in range(MIN_PIN_ID, MAX_PIN_ID + 1):
             aruco_reader.ensure_object(marker_id).render(
                 str(DEFAULT_BOLO_MODEL),
-                pose_offsets=((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
-                scale=1.0,
+                pose_offsets=(BOLO_STL_TVEC_OFFSET, BOLO_STL_ROTATION_RVEC),
+                scale=BOLO_STL_SCALE,
                 color=(255, 190, 40),
             )
         print(f"Pin rendering: STL ({DEFAULT_BOLO_MODEL.name})")
