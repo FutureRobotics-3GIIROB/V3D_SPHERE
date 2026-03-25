@@ -13,6 +13,7 @@ import numpy as np
 from ARUCO_reader import ArucoReader
 from Cam_administrator import create_latest_frame_camera, prompt_default_camera
 from homography_Calibrator import HomographyCalibrator
+from robodk_worker import RoboDKWorker
 from vision_processor import configure_pin_rendering, process_camera_step
 from vision_renderer import (
     draw_ball_position,
@@ -325,6 +326,7 @@ def _process_main_frame(
 def main() -> int:
     """Run full pipeline with camera vision thread and shared state for RoboDK."""
     vision_state = SharedVisionState()
+    robodk_worker = RoboDKWorker(vision_state)
     camera_source = prompt_default_camera()
 
     calib = HomographyCalibrator.ensure_positions_file(camera_source=camera_source, ask_user=True)
@@ -350,6 +352,8 @@ def main() -> int:
 
     executor: ThreadPoolExecutor | None = None
     try:
+        robodk_worker.start()
+
         if use_multithread:
             executor = ThreadPoolExecutor(max_workers=CPU_WORKERS)
 
@@ -386,6 +390,7 @@ def main() -> int:
                 break
 
     finally:
+        robodk_worker.stop()
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
         cam_reader.release()

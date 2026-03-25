@@ -3,21 +3,21 @@ repos:
     rev: v0.6.9
     hooks:
       - id: ruff
-        files: ^mainV3D_no_robodk/.*\.py$
+        files: ^main/.*\.py$
         args: [--fix]
       - id: ruff-format
-        files: ^mainV3D_no_robodk/.*\.py$
+        files: ^main/.*\.py$
 
   - repo: https://github.com/psf/black
     rev: 24.10.0
     hooks:
       - id: black
-        files: ^mainV3D_no_robodk/.*\.py$
+        files: ^main/.*\.py$
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.2
     hooks:
       - id: mypy
-        files: ^mainV3D_no_robodk/.*\.py$
+        files: ^main/.*\.py$
         additional_dependencies:
           - numpy>=1.20

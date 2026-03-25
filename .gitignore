@@ -200,7 +200,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 
 # Project runtime/calibration outputs
-mainV3D_no_robodk/positions.json
+main/positions.json
 .cursorignore
 .cursorindexingignore
 

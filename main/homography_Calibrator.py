@@ -247,7 +247,7 @@ class HomographyCalibrator:
         status = "ON" if new_state else "OFF"
         print(f"Calibration debug mode: {status}")
         if new_state:
-            print("Calibration backend info -> " f"CPU multithread=True, CPU threads={cpu_threads}")
+            print(f"Calibration backend info -> CPU multithread=True, CPU threads={cpu_threads}")
         return new_state
 
     @classmethod

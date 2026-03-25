@@ -27,7 +27,6 @@ exclude = '''
     \.git
   | \.venv
   | __pycache__
-    | Programas RoboDK
 )/
 '''
 
@@ -38,7 +37,6 @@ exclude = [
     ".git",
     ".venv",
     "__pycache__",
-    "Programas RoboDK",
 ]
 
 [tool.ruff.lint]
@@ -68,7 +66,7 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 check_untyped_defs = true
-files = ["mainV3D_no_robodk"]
+files = ["main"]
 exclude = [
     "^\\.venv/",
     "^__pycache__/",
