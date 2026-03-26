@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ARUCO_reader import ArucoReader
-from ball_detector import detect_ball, draw_ball
+from ball_detector import BallDetectorConfig, detect_ball, draw_ball
 from homography_Calibrator import HomographyCalibrator
 from vision_state import BallState, FrameStepResult, MarkerState
 
@@ -40,15 +40,16 @@ def detect_aruco_and_ball(
     frame: Any,
     aruco_reader: ArucoReader,
     executor: ThreadPoolExecutor | None,
+    ball_config: BallDetectorConfig,
 ) -> tuple[Any, dict[str, Any] | None]:
     """Run ArUco and ball detection for one frame."""
     if executor is not None:
         future_aruco = executor.submit(aruco_reader.process_frame, frame, True)
-        future_ball = executor.submit(detect_ball, frame)
+        future_ball = executor.submit(detect_ball, frame, ball_config)
         return future_aruco.result(), cast(dict[str, Any] | None, future_ball.result())
 
     aruco_result = aruco_reader.process_frame(frame, draw=True)
-    return aruco_result, cast(dict[str, Any] | None, detect_ball(frame))
+    return aruco_result, cast(dict[str, Any] | None, detect_ball(frame, ball_config))
 
 
 def extract_ball_data(det: dict[str, Any] | None) -> tuple[tuple[int, int] | None, float]:
@@ -142,13 +143,14 @@ def process_camera_step(
     use_stl_render: bool,
     executor: ThreadPoolExecutor | None,
     enable_ball_detection: bool = True,
+    ball_config: BallDetectorConfig = BallDetectorConfig(),
 ) -> FrameStepResult:
     """Process one camera frame and return all output artifacts.
 
     This is the main vision processing pipeline: detection → extraction → payload building.
     """
     if enable_ball_detection:
-        aruco_result, det = detect_aruco_and_ball(frame, aruco_reader, executor)
+        aruco_result, det = detect_aruco_and_ball(frame, aruco_reader, executor, ball_config)
         source_label = "COLOR"
     else:
         aruco_result = aruco_reader.process_frame(frame, draw=True)

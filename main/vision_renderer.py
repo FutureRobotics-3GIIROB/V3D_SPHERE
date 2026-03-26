@@ -28,15 +28,18 @@ def draw_debug_overlay(
     marker_debug: list[tuple[int, tuple[float, float, float] | None, str]],
 ) -> None:
     """Draw runtime debug details while debug mode is active."""
+    marker_ids = [marker_id for marker_id, _, _ in marker_debug]
     debug_lines = [
         "DEBUG MODE: ON",
         "Backend: CPU",
         f"Multithread CPU: {use_multithread}",
         f"Ball source: {source_label}",
         f"Ball xyz_mm: ({ball_xyz_mm[0]:.1f}, {ball_xyz_mm[1]:.1f}, {ball_xyz_mm[2]:.1f})",
+        f"Markers detected: {len(marker_debug)}",
+        f"Marker IDs: {marker_ids if marker_ids else 'none'}",
     ]
 
-    for marker_id, xyz_mm, estado in marker_debug[:4]:
+    for marker_id, xyz_mm, estado in marker_debug:
         if xyz_mm is None:
             debug_lines.append(f"Pin {marker_id}: xyz=n/a estado={estado}")
         else:
@@ -44,18 +47,20 @@ def draw_debug_overlay(
                 f"Pin {marker_id}: ({xyz_mm[0]:.1f}, {xyz_mm[1]:.1f}, {xyz_mm[2]:.1f}) {estado}"
             )
 
-    y = 88
+    # Keep debug block below top overlays (ball position, FPS, and pin count).
+    y = 112
+    line_height = 20
     for line in debug_lines:
         cv2.putText(
             frame,
             line,
             (12, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
+            0.5,
             (0, 220, 255),
-            2,
+            1,
         )
-        y += 24
+        y += line_height
 
 
 def draw_debug_aruco_markers(frame: Any, detections: list[Any]) -> None:

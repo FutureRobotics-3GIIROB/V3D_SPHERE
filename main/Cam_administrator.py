@@ -18,8 +18,9 @@ import cv2
 
 CAMERA_CONFIG_FILE = Path(__file__).resolve().parent / ".camera_source.txt"
 DEFAULT_REMOTE_URL = "http://127.0.0.1:8080/video"
-AUTO_PROBE_CAMERAS = True
+AUTO_PROBE_CAMERAS = False
 SHOW_PROBED_CAMERAS = False
+AUTO_PROBE_MAX_DEVICES = 4
 
 
 CameraSource = Union[int, str]
@@ -176,7 +177,11 @@ def prompt_default_camera() -> CameraSource:
     """Ask user for default camera source via console."""
     local_cameras: list[int] = []
     if AUTO_PROBE_CAMERAS:
-        local_cameras = list_local_cameras()
+        try:
+            local_cameras = list_local_cameras(max_devices=AUTO_PROBE_MAX_DEVICES)
+        except KeyboardInterrupt:
+            print("\nLocal camera scan interrupted. Continuing without scan.")
+            local_cameras = []
     last_source = load_last_camera_source() or DEFAULT_REMOTE_URL
 
     print("\n=== Camera Selection ===")
@@ -199,7 +204,11 @@ def prompt_default_camera() -> CameraSource:
 
     user_input = input("Camera source [Enter to reuse last]: ").strip()
     if user_input.lower() == "scan":
-        local_cameras = list_local_cameras()
+        try:
+            local_cameras = list_local_cameras(max_devices=8)
+        except KeyboardInterrupt:
+            print("\nManual scan interrupted. Proceeding without scan results.")
+            local_cameras = []
         print(f"Local cameras found: {len(local_cameras)}")
         print("Local cameras detected:")
         if local_cameras:

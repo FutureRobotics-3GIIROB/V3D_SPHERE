@@ -41,14 +41,14 @@ PIN_BASE_NAME_FMT = "boloCaeBase{index}"
 # Mapping between camera marker IDs and RoboDK pin indices.
 # Default assumes markers are labeled 2..9 while RoboDK pins are 1..8.
 PIN_MARKER_TO_ROBODK: dict[int, int] = {
-    2: 1,
-    3: 2,
-    4: 3,
-    5: 4,
-    6: 5,
-    7: 6,
-    8: 7,
-    9: 8,
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,
+    7: 7,
+    8: 8,
 }
 
 PIN_JOINT_UP = [0]

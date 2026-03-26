@@ -11,6 +11,7 @@ from typing import Any, cast
 import cv2
 import numpy as np
 from ARUCO_reader import ArucoReader
+from ball_detector import HSVCalibrationUI
 from Cam_administrator import create_latest_frame_camera, prompt_default_camera
 from homography_Calibrator import HomographyCalibrator
 from robodk_worker import RoboDKWorker
@@ -26,6 +27,7 @@ from vision_state import SharedVisionState
 
 F9_KEYS = {120, 0x780000}
 CPU_WORKERS = 2
+MAIN_WINDOW_NAME = "main_tester - no RoboDK"
 
 
 def toggle_debug(debug_mode: bool) -> bool:
@@ -281,6 +283,17 @@ def _handle_main_key(
     return False, debug_mode, homography
 
 
+def _handle_hsv_key(key: int, hsv_ui: HSVCalibrationUI) -> None:
+    """Toggle HSV calibration mode with keyboard shortcut."""
+    if key not in (ord("h"), ord("H")):
+        return
+    enabled = hsv_ui.toggle()
+    if enabled:
+        print("HSV calibration: ON (misma ventana, ajusta sliders HSV)")
+        return
+    print("HSV calibration: OFF")
+
+
 def _create_runtime(
     camera_source: Any,
 ) -> tuple[Any, ArucoReader, bool, bool, bool, deque[float]]:
@@ -310,9 +323,11 @@ def _process_main_frame(
     debug_mode: bool,
     frame_times: deque[float],
     loop_start: float,
-) -> Any:
+    hsv_ui: HSVCalibrationUI,
+) -> tuple[Any, Any]:
     """Process one frame and render all overlays, returning the processing step result."""
     enable_ball_detection = not vision_state.is_ball_detection_paused()
+    ball_config = hsv_ui.get_config()
 
     step = process_camera_step(
         frame=frame,
@@ -321,6 +336,7 @@ def _process_main_frame(
         use_stl_render=use_stl_render,
         executor=executor if use_multithread else None,
         enable_ball_detection=enable_ball_detection,
+        ball_config=ball_config,
     )
 
     vision_state.update_frame(
@@ -338,7 +354,13 @@ def _process_main_frame(
         frame_times=frame_times,
         loop_start=loop_start,
     )
-    return step
+
+    display_frame = hsv_ui.build_calibration_view(
+        source_frame=frame,
+        fallback_frame=step.frame,
+        config=ball_config,
+    )
+    return step, display_frame
 
 
 def main() -> int:
@@ -364,11 +386,12 @@ def main() -> int:
     ) = _create_runtime(camera_source)
 
     print("Compute backend: CPU multithread")
+    hsv_ui = HSVCalibrationUI(main_window_name=MAIN_WINDOW_NAME)
 
     print("\n=== Main Tester (No RoboDK) ===")
     print(
         "Keys: ESC/q=exit, r=regenerate calibration, F9=toggle debug, "
-        "SPACE=reset pins, P=toggle UR3e prepick follow, G=UR3e pick+drop"
+        "SPACE=reset pins, H=HSV calibration, P=toggle UR3e prepick follow, G=UR3e pick+drop"
     )
 
     executor: ThreadPoolExecutor | None = None
@@ -395,9 +418,11 @@ def main() -> int:
                 debug_mode=debug_mode,
                 frame_times=frame_times,
                 loop_start=loop_start,
+                hsv_ui=hsv_ui,
             )
 
-            cv2.imshow("main_tester - no RoboDK", step.frame)
+            _, display_frame = step
+            cv2.imshow(MAIN_WINDOW_NAME, display_frame)
             key = cv2.waitKeyEx(1)
 
             should_exit, debug_mode, homography = _handle_main_key(
@@ -408,10 +433,12 @@ def main() -> int:
                 cam_reader=cam_reader,
                 homography=homography,
             )
+            _handle_hsv_key(key, hsv_ui)
             if should_exit:
                 break
 
     finally:
+        hsv_ui.set_enabled(False)
         robodk_worker.stop()
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
