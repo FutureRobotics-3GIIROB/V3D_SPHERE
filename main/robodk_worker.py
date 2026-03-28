@@ -459,8 +459,7 @@ class RoboDKWorker:
         move_to(self._ball_robot, ball_target, "MoveJ")
 
     def _move_ball_robot_to_drop_target(self, drop_target: Any) -> bool:
-        """Move Bola robot to same drop target pose/reference used by UR3e.
-        """
+        """Move Bola robot to same drop target pose/reference used by UR3e."""
         if self._ball_robot is None:
             return False
 
