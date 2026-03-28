@@ -28,16 +28,13 @@ BALL_TARGET_FRAME_NAME = "BallTarget"
 UR3E_ROBOT_NAME = "UR3e"
 UR3E_TARGET_NAME = "BallApproach"
 UR3E_DROP_TARGET_NAME = "soltar"
+BALL_FALL_TARGET_NAME = "caida"
+BALL_SLIDE_TARGET_NAME = "deslizar"
+BALL_ROLL_TARGET_NAME = "rodar"
 BALL_VISUAL_NAME = "BolaBolos"
 BALL_FRAME_ON_BOLA_NAME = "FrameBolaBola"
 BALL_FRAME_ON_UR3E_NAME = "FrameBolaUR3e"
 UR3E_PREPICK_OFFSET_MM = 100.0
-BALL_SIM_DROP_DOWN_MM = 250.0
-BALL_SIM_SIDE_DOWN_SIDE_MM = 50.0
-BALL_SIM_SIDE_DOWN_DROP_MM = 50.0
-BALL_SIM_FINAL_SIDE_MM = 100.0
-# Side direction for the ramp simulation. Use 1.0 or -1.0 to flip direction.
-BALL_SIM_SIDE_SIGN = 1.0
 # TCP orientation correction for UR3e prepick target (radians).
 # 180 deg around Y fixes the "inverse TCP" orientation reported in RoboDK.
 UR3E_TCP_RX_RAD = 0.0
@@ -461,19 +458,15 @@ class RoboDKWorker:
         )
         move_to(self._ball_robot, ball_target, "MoveJ")
 
-    def _move_ball_robot_to_drop_target(self, drop_target: Any) -> tuple[float, float, float]:
+    def _move_ball_robot_to_drop_target(self, drop_target: Any) -> bool:
         """Move Bola robot to same drop target pose/reference used by UR3e.
-
-        Returns the absolute XYZ position finally used for post-drop simulation.
         """
         if self._ball_robot is None:
-            return (0.0, 0.0, 0.0)
+            return False
 
         # Try direct move to the exact RoboDK target first.
         if move_to(self._ball_robot, drop_target, "MoveJ"):
-            pose = drop_target.PoseAbs()
-            pos = pose.Pos()
-            return (float(pos[0]), float(pos[1]), float(pos[2]))
+            return True
 
         # Fallback: clone drop target pose/frame for Bola and move to it.
         drop_pose_local = drop_target.Pose()
@@ -484,37 +477,27 @@ class RoboDKWorker:
             drop_pose_local,
             frame=drop_parent,
         )
-        move_to(self._ball_robot, bola_drop_target, "MoveJ")
+        return move_to(self._ball_robot, bola_drop_target, "MoveJ")
 
-        pose = drop_target.PoseAbs()
-        pos = pose.Pos()
-        return (float(pos[0]), float(pos[1]), float(pos[2]))
+    def _move_ball_drop_sequence(self) -> bool:
+        """Execute post-drop Bola sequence using linear moves through fixed targets."""
+        if self._ball_robot is None:
+            return False
 
-    def _simulate_ball_fall_and_roll(self, start_xyz: tuple[float, float, float]) -> None:
-        """Simulate post-release fall and ramp roll using configurable offsets."""
-        sx = float(start_xyz[0])
-        sy = float(start_xyz[1])
-        sz = float(start_xyz[2])
-
-        # 1) Fall down on the ramp.
-        p1 = (sx, sy, sz - BALL_SIM_DROP_DOWN_MM)
-        self._move_ball_visual_to_xyz(*p1)
-
-        # 2) Roll sideways while still descending.
-        p2 = (
-            p1[0] + BALL_SIM_SIDE_SIGN * BALL_SIM_SIDE_DOWN_SIDE_MM,
-            p1[1],
-            p1[2] - BALL_SIM_SIDE_DOWN_DROP_MM,
+        sequence_names = (
+            BALL_FALL_TARGET_NAME,
+            BALL_SLIDE_TARGET_NAME,
+            BALL_ROLL_TARGET_NAME,
         )
-        self._move_ball_visual_to_xyz(*p2)
-
-        # 3) Continue sideways roll.
-        p3 = (
-            p2[0] + BALL_SIM_SIDE_SIGN * BALL_SIM_FINAL_SIDE_MM,
-            p2[1],
-            p2[2],
-        )
-        self._move_ball_visual_to_xyz(*p3)
+        for target_name in sequence_names:
+            target = get_target(target_name)
+            if target is None:
+                print(f"UR3e pick/drop: target '{target_name}' no encontrado")
+                return False
+            if not move_to(self._ball_robot, target, "MoveL"):
+                print(f"UR3e pick/drop: MoveL a '{target_name}' no alcanzable")
+                return False
+        return True
 
     def _execute_pick_and_drop_sequence(self) -> None:
         """Run UR3e pick-and-drop sequence while pausing ball tracking."""
@@ -560,13 +543,16 @@ class RoboDKWorker:
             self._last_ur3e_xyz_mm = None
 
             print("UR3e pick/drop: posicionando robot Bola en soltar")
-            drop_abs_xyz = self._move_ball_robot_to_drop_target(drop_target)
+            if not self._move_ball_robot_to_drop_target(drop_target):
+                print("UR3e pick/drop: no se pudo mover robot Bola a soltar")
 
             print("UR3e pick/drop: devolviendo BolaBolos a FrameBolaBola")
             if not self._attach_ball_visual_to_bola():
                 print("UR3e pick/drop: no se pudo parentar BolaBolos en FrameBolaBola")
 
-            # Temporarily disabled: post-drop fall/roll simulation sequence.
+            print("UR3e pick/drop: secuencia Bola MoveL caida -> deslizar -> rodar")
+            if not self._move_ball_drop_sequence():
+                print("UR3e pick/drop: secuencia Bola post-suelta incompleta")
         finally:
             print("UR3e pick/drop: reactivar tracking")
             self.pause_ball_detection(False)
